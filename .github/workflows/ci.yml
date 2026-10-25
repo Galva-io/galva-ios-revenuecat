@@ -34,9 +34,10 @@ jobs:
             revenuecat: latest
     env:
       # Package.swift points at a sibling galva-ios checkout until the
-      # integrations API ships in a tagged galva-ios release. Delete this and
-      # the clone step once it depends on the tagged URL instead.
-      GALVA_IOS_REF: feat/purchase-controller
+      # integrations API ships in a tagged galva-ios release, so CI clones
+      # galva-ios main next to this repo. Delete this and the clone step once
+      # Package.swift depends on the tagged URL instead.
+      GALVA_IOS_REF: main
     steps:
       - uses: actions/checkout@v4
 
