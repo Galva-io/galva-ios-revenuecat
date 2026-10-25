@@ -64,7 +64,7 @@ enum RevenueCatIntegration {
     static let name = "revenuecat"
 
     /// This package's version. Bump on every release.
-    static let version = "0.1.0"
+    static let version = "1.0.0"
 
     /// Install the purchase controller right away — it falls back to Galva's
     /// StoreKit flow until RevenueCat is configured — and start the sync.
