@@ -8,7 +8,7 @@ First release.
 
 ### Added
 
-- The `.revenueCat()` integration, passed to `Galva.configure(…, integrations:)` or `.galvaConfigure(…, integrations:)`.
+- The `.revenueCat()` integration, passed to `Galva.configure(…, integrations:)`.
 - Offer purchases from Galva's in-app messages run through RevenueCat, so entitlements unlock in the same session. Galva-signed promotional offers use Galva's StoreKit purchase, then hand it to RevenueCat with `syncPurchases()` or `recordPurchase(_:)`.
 - Galva's subscriber follows RevenueCat's app user ID with `identity: .followRevenueCat`, the default. With `.manual`, your app identifies Galva itself.
 - RevenueCat's app user ID and active entitlements are sent to Galva as `$gv_rc_*` attributes.

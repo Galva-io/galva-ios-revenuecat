@@ -65,13 +65,13 @@ struct MyApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .autoDisplayInAppMessages()
+                .onOpenURL { url in Galva.handleOpenURL(url) }  // opens Galva links
         }
     }
 }
 ```
 
-Using the SwiftUI modifier instead? Pass the same list: `.galvaConfigure(apiKey: "pk_your_app_id", integrations: [.revenueCat()])`.
+Galva presents its in-app messages on its own; see [Present messages yourself](https://github.com/Galva-io/galva-ios#present-messages-yourself) to control when they appear.
 
 From now on, use RevenueCat as usual. `Purchases.shared.logIn("user_42")` identifies the Galva subscriber as `user_42`. If you followed Galva's docs and call `AppUser.identify(userId: Purchases.shared.appUserID)`, you can remove that call.
 
