@@ -1,0 +1,72 @@
+# CI — runs on every PR and every push to main.
+#
+# `swift test` at both ends of the supported RevenueCat range:
+#   • the 5.19.0 floor declared in Package.swift, on Xcode 26 — the oldest
+#     toolchain Galva supports, and the one that floor exists for;
+#   • the newest 5.x SwiftPM resolves, on the newest Xcode on the runner.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: RevenueCat 5.19.0 (floor) on Xcode 26
+            runner: macos-15
+            xcode: "26"
+            revenuecat: "5.19.0"
+          - name: RevenueCat latest on newest Xcode
+            runner: macos-latest
+            xcode: newest
+            revenuecat: latest
+    env:
+      # Package.swift points at a sibling galva-ios checkout until the
+      # integrations API ships in a tagged galva-ios release. Delete this and
+      # the clone step once it depends on the tagged URL instead.
+      GALVA_IOS_REF: feat/purchase-controller
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out galva-ios next to this repo
+        run: git clone --depth 1 --branch "$GALVA_IOS_REF" https://github.com/Galva-io/galva-ios.git ../galva-ios
+
+      # Galva compiles only with Xcode 26+ (iOS 26 SDK StoreKit symbols,
+      # back-deployed to iOS 15).
+      - name: Select Xcode
+        run: |
+          if [ "${{ matrix.xcode }}" = "newest" ]; then
+            XCODE="$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)"
+          else
+            XCODE="$(ls -d /Applications/Xcode_${{ matrix.xcode }}*.app 2>/dev/null | sort -V | tail -1)"
+            # This job exists to prove the floor builds on this Xcode — never
+            # fall back to another version.
+            if [ -z "$XCODE" ]; then
+              echo "::error::No Xcode ${{ matrix.xcode }} on ${{ matrix.runner }}"
+              exit 1
+            fi
+          fi
+          echo "Selecting $XCODE"
+          sudo xcode-select -switch "$XCODE"
+          xcodebuild -version
+
+      - name: Pin RevenueCat to ${{ matrix.revenuecat }}
+        if: matrix.revenuecat != 'latest'
+        run: |
+          sed -i '' 's/"5.19.0"..<"6.0.0"/exact: "${{ matrix.revenuecat }}"/' Package.swift
+          grep -n 'exact: "${{ matrix.revenuecat }}"' Package.swift
+
+      - name: swift test
+        run: swift test --parallel
