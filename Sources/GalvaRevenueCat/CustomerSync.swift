@@ -16,7 +16,7 @@
 //
 
 import Foundation
-import Galva
+@_spi(GalvaIntegration) import Galva
 
 actor CustomerSync {
 

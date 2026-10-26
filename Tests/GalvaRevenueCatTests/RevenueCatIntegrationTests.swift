@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import Galva
+@_spi(GalvaIntegration) import Galva
 @testable import GalvaRevenueCat
 import XCTest
 

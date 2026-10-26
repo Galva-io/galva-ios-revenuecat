@@ -45,7 +45,7 @@
 //
 
 import Foundation
-import Galva
+@_spi(GalvaIntegration) import Galva
 import RevenueCat
 import StoreKit
 
@@ -163,12 +163,8 @@ struct RevenueCatPurchaseController: GalvaPurchaseController {
 
     /// Map an error thrown by RevenueCat's purchase API onto the outcome the
     /// in-app message understands: cancellation and Ask to Buy are normal
-    /// outcomes, everything else becomes a `Galva.PurchaseError`. A
-    /// `Galva.PurchaseError` passes through unchanged.
+    /// outcomes, everything else becomes a `Galva.PurchaseError`.
     static func result(for error: any Error) throws -> Galva.PurchaseResult {
-        if let error = error as? Galva.PurchaseError {
-            throw error
-        }
         guard let code = error as? ErrorCode else {
             throw Galva.PurchaseError.failed(String(describing: error))
         }

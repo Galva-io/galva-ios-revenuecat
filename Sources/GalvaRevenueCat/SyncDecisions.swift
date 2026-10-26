@@ -112,7 +112,7 @@ struct RevenueCatTraits: Equatable, Sendable {
 }
 
 /// What the sync remembers between RevenueCat updates.
-struct SyncState: Equatable, Sendable {
+struct SyncState: Sendable {
 
     let followsRevenueCatIdentity: Bool
 

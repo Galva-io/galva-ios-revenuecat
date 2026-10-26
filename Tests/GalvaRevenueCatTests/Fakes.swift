@@ -52,11 +52,7 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
     @Locked var currentUser = RevenueCatCustomer.anonymous().user
     @Locked var purchaseResult: Result<RevenueCatPurchaseOutcome, any Error> = .success(.cancelled)
     @Locked var storeKitLookupResult: Result<Bool, any Error> = .success(false)
-    @Locked var recordError: (any Error)?
     @Locked var syncError: (any Error)?
-    /// Always `nil` in practice: a `StoreKit.Transaction` can only come from
-    /// a real purchase.
-    @Locked var latest: StoreKit.Transaction?
     /// What `latestTransactionID(for:)` returns, one per call; `nil` once
     /// they run out.
     @Locked var latestTransactionIDs: [UInt64?] = []
@@ -88,7 +84,6 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
 
     func recordPurchase(_ result: Product.PurchaseResult) async throws {
         $recordCount.withLock { $0 += 1 }
-        if let recordError { throw recordError }
     }
 
     func syncPurchases() async throws {
@@ -96,9 +91,11 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
         if let syncError { throw syncError }
     }
 
+    /// Always `nil`: a `StoreKit.Transaction` can only come from a real
+    /// purchase.
     func latestTransaction(for productId: String) async -> StoreKit.Transaction? {
         $purchaseCalls.withLock { $0.append(.latestTransaction) }
-        return latest
+        return nil
     }
 
     func latestTransactionID(for productId: String) async -> UInt64? {
@@ -128,20 +125,24 @@ final class FakeGalva: GalvaAdapter, @unchecked Sendable {
     @Locked private(set) var calledOnMainThread = false
 
     func identify(userId: String, appAccountToken: UUID?) {
-        if Thread.isMainThread { calledOnMainThread = true }
-        $calls.withLock { $0.append(.identify(userId: userId, appAccountToken: appAccountToken)) }
+        record(.identify(userId: userId, appAccountToken: appAccountToken))
     }
 
     func logOut() {
-        $calls.withLock { $0.append(.logOut) }
+        record(.logOut)
     }
 
     func setTraits(_ traits: RevenueCatTraits) {
-        $calls.withLock { $0.append(.setTraits(traits)) }
+        record(.setTraits(traits))
     }
 
     func reconcileTransactions() {
-        $calls.withLock { $0.append(.reconcile) }
+        record(.reconcile)
+    }
+
+    private func record(_ call: Call) {
+        if Thread.isMainThread { calledOnMainThread = true }
+        $calls.withLock { $0.append(call) }
     }
 }
 

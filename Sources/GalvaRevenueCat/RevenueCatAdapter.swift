@@ -14,13 +14,13 @@ import RevenueCat
 import StoreKit
 
 /// Who RevenueCat's user is.
-struct RevenueCatUser: Sendable, Equatable {
+struct RevenueCatUser: Sendable {
     var appUserID: String
     var isAnonymous: Bool
 }
 
 /// RevenueCat customer state, captured on every `CustomerInfo` update.
-struct RevenueCatCustomer: Sendable, Equatable {
+struct RevenueCatCustomer: Sendable {
     var appUserID: String
     var isAnonymous: Bool
     var originalAppUserID: String

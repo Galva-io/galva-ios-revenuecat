@@ -106,7 +106,6 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
 
     func test_revenueCatCompletedWithoutTransaction_andNoneInStoreKit_fails() async {
         revenueCat.purchaseResult = .success(.completed(nil))
-        revenueCat.latest = nil
 
         do {
             _ = try await purchase()
@@ -318,14 +317,6 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
         let nsError = ErrorCode.purchaseCancelledError as NSError
         guard case .cancelled = try RevenueCatPurchaseController.result(for: nsError) else {
             return XCTFail("expected .cancelled")
-        }
-    }
-
-    func test_errorMapping_galvaPurchaseError_passesThroughUnchanged() {
-        for error in [Galva.PurchaseError.networkError("offline"), .productUnavailable, .notAvailableInStorefront] {
-            XCTAssertThrowsError(try RevenueCatPurchaseController.result(for: error)) { thrown in
-                XCTAssertEqual(thrown as? Galva.PurchaseError, error)
-            }
         }
     }
 
