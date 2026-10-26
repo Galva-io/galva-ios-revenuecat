@@ -12,6 +12,18 @@
 //  ───────
 //  • RevenueCat completes purchases (`.revenueCat`, the default), no offer
 //      → `Purchases.purchase(product:)`. RevenueCat records and finishes it.
+//        It also throws when StoreKit charged the user and only its own
+//        receipt post failed. Offline or on a server error (5xx) it leaves
+//        the transaction unfinished and posts it again on the next launch;
+//        when its server rejects the receipt (4xx) it finishes it and never
+//        posts it again. So when it throws, a verified transaction StoreKit
+//        didn't have before means the purchase completed, and a background
+//        `syncPurchases()` asks RevenueCat to record it. A consumable
+//        RevenueCat finished leaves StoreKit's history, so after a 4xx its
+//        purchase can't be told from a failure. When RevenueCat finds no
+//        product (it swallows the lookup's error), StoreKit is asked
+//        directly whether the network failed or the App Store doesn't sell
+//        it.
 //  • RevenueCat completes purchases, Galva-signed promotional offer
 //      → Galva's StoreKit flow (RevenueCat's public API can't apply a
 //        Galva-signed JWS offer), then `syncPurchases()` so RevenueCat
@@ -68,34 +80,95 @@ struct RevenueCatPurchaseController: GalvaPurchaseController {
 
     @MainActor
     private func purchaseWithRevenueCat(productId: String) async throws -> Galva.PurchaseResult {
+        // Noted first, so a transaction StoreKit makes before RevenueCat
+        // throws stands out.
+        let before = await revenueCat.latestTransactionID(for: productId)
         let outcome: RevenueCatPurchaseOutcome
         do {
             outcome = try await revenueCat.purchase(productId: productId)
         } catch {
-            return try Self.result(for: error)
+            return try await result(for: error, productId: productId, latestTransactionBefore: before)
         }
         switch outcome {
         case .cancelled:
             return .cancelled
+        case .productNotFound:
+            throw await productLookupFailure(productId: productId)
         case .completed(let transaction?):
             return .completed(transaction)
         case .completed(nil):
             // RevenueCat in StoreKit 1 mode hands back an SK1 transaction;
             // StoreKit 2 still sees the same purchase.
-            if let transaction = await revenueCat.latestTransaction(for: productId) {
-                return .completed(transaction)
+            return try await completedInStoreKit(productId: productId)
+        }
+    }
+
+    /// The outcome of a RevenueCat purchase that threw. Unless it was
+    /// cancelled or is pending, check whether StoreKit charged the user
+    /// anyway: if so, the message shows the purchase as completed rather than
+    /// an error that invites paying twice.
+    @MainActor
+    private func result(
+        for error: any Error,
+        productId: String,
+        latestTransactionBefore before: UInt64?
+    ) async throws -> Galva.PurchaseResult {
+        let mapped = Result { try Self.result(for: error) }
+        if case .success(let result) = mapped {
+            return result
+        }
+        // Compares ids, not dates, so the device clock can't fool it.
+        guard let latest = await revenueCat.latestTransactionID(for: productId), latest != before else {
+            return try mapped.get()
+        }
+        logger.warning(.integration, "RevenueCat failed after StoreKit completed the purchase; syncing purchases so RevenueCat records it", metadata: [
+            "productId": productId,
+            "transactionId": String(latest),
+        ], error: error)
+        // Best-effort, and slow on the bad network that often caused this,
+        // so the message doesn't wait for it.
+        Task {
+            await sync(ifItFails: "RevenueCat records the purchase on the next launch if it left the transaction unfinished, otherwise on its next sync or restore")
+        }
+        return try await completedInStoreKit(productId: productId)
+    }
+
+    /// A purchase StoreKit completed, with its verified transaction.
+    @MainActor
+    private func completedInStoreKit(productId: String) async throws -> Galva.PurchaseResult {
+        if let transaction = await revenueCat.latestTransaction(for: productId) {
+            return .completed(transaction)
+        }
+        logger.error(.integration, "The purchase completed but StoreKit has no verified transaction for it", metadata: [
+            "productId": productId,
+        ])
+        throw Galva.PurchaseError.failed("The purchase completed but StoreKit returned no transaction")
+    }
+
+    /// Why RevenueCat returned no product. It swallows the lookup's error, so
+    /// a flaky network looks like a product the App Store doesn't sell; asked
+    /// directly, StoreKit tells them apart, as in Galva's own StoreKit flow.
+    private func productLookupFailure(productId: String) async -> Galva.PurchaseError {
+        do {
+            guard try await revenueCat.storeKitHasProduct(productId) else {
+                return .productUnavailable
             }
-            logger.error(.integration, "RevenueCat completed a purchase but StoreKit has no verified transaction for it", metadata: [
-                "productId": productId,
-            ])
-            throw Galva.PurchaseError.failed("RevenueCat completed the purchase but StoreKit returned no transaction")
+            return .failed("RevenueCat couldn't load product \(productId), though the App Store sells it")
+        } catch StoreKitError.networkError(let underlying) {
+            return .networkError(String(describing: underlying))
+        } catch {
+            return .failed(String(describing: error))
         }
     }
 
     /// Map an error thrown by RevenueCat's purchase API onto the outcome the
     /// in-app message understands: cancellation and Ask to Buy are normal
-    /// outcomes, everything else becomes a `Galva.PurchaseError`.
+    /// outcomes, everything else becomes a `Galva.PurchaseError`. A
+    /// `Galva.PurchaseError` passes through unchanged.
     static func result(for error: any Error) throws -> Galva.PurchaseResult {
+        if let error = error as? Galva.PurchaseError {
+            throw error
+        }
         guard let code = error as? ErrorCode else {
             throw Galva.PurchaseError.failed(String(describing: error))
         }
@@ -149,7 +222,7 @@ struct RevenueCatPurchaseController: GalvaPurchaseController {
             case .recordPurchase:
                 await record(result)
             case .syncThenFinish:
-                if await sync() {
+                if await sync(ifItFails: "RevenueCat picks the unfinished transaction up on next launch") {
                     await transaction.finish()
                 }
             }
@@ -171,19 +244,21 @@ struct RevenueCatPurchaseController: GalvaPurchaseController {
         } catch let error as ErrorCode where error == .configurationError {
             // `recordPurchase` requires StoreKit 2; under StoreKit 1 a sync
             // posts the receipt instead.
-            await sync()
+            await sync(ifItFails: "RevenueCat picks the transaction up on next launch")
         } catch {
             logger.warning(.integration, "RevenueCat recordPurchase failed", error: error)
         }
     }
 
+    /// `syncPurchases()`, best-effort: `false` when it failed, after
+    /// logging what happens to the purchase instead.
     @discardableResult
-    private func sync() async -> Bool {
+    private func sync(ifItFails consequence: String) async -> Bool {
         do {
             try await revenueCat.syncPurchases()
             return true
         } catch {
-            logger.warning(.integration, "RevenueCat syncPurchases failed; RevenueCat picks the transaction up on next launch", error: error)
+            logger.warning(.integration, "RevenueCat syncPurchases failed; \(consequence)", error: error)
             return false
         }
     }

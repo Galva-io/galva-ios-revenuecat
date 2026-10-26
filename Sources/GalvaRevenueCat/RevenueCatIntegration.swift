@@ -53,6 +53,7 @@ public extension Galva.Integration {
                 logger: context.logger,
                 revenueCat: LiveRevenueCatAdapter(),
                 galva: LiveGalvaAdapter(),
+                store: LiveMirroredUserStore(),
                 foregrounds: .app()
             )
         }
@@ -73,6 +74,7 @@ enum RevenueCatIntegration {
         logger: any GalvaLogger,
         revenueCat: any RevenueCatAdapter,
         galva: any GalvaAdapter,
+        store: any MirroredUserStore,
         foregrounds: ForegroundSignals
     ) {
         Galva.setPurchaseController(
@@ -81,6 +83,7 @@ enum RevenueCatIntegration {
         let sync = CustomerSync(
             followsRevenueCatIdentity: identity == .followRevenueCat,
             galva: galva,
+            store: store,
             logger: logger
         )
         // Runs for the life of the app; the task keeps `sync` alive.

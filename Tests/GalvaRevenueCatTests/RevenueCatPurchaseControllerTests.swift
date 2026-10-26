@@ -4,9 +4,12 @@
 //
 //  Pins purchase routing (RevenueCat API vs Galva's StoreKit flow + hand-off)
 //  and the RevenueCat error → Galva outcome mapping. A verified StoreKit
-//  transaction can't be constructed in unit tests, so the post-purchase
-//  hand-off (`recordPurchase` / `syncPurchases` + `finish`) is covered by
-//  sandbox QA instead.
+//  transaction can't be constructed in unit tests — not even with
+//  `SKTestSession`, which `swift test` isn't entitled to — so the
+//  post-purchase hand-off (`recordPurchase` / `syncPurchases` + `finish`) is
+//  covered by sandbox QA instead. "RevenueCat threw after StoreKit charged"
+//  is told by StoreKit's transaction ids, which the fake stands in for, so
+//  it's pinned up to the final `.completed`, which needs a real transaction.
 //
 
 import Foundation
@@ -128,6 +131,152 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
         guard case .pending = try await purchase() else { return XCTFail("expected .pending") }
     }
 
+    func test_revenueCatThrowsCancelledOrPending_doesNotLookForATransaction() async throws {
+        for code in [ErrorCode.purchaseCancelledError, .paymentPendingError] {
+            revenueCat = FakeRevenueCat()
+            revenueCat.purchaseResult = .failure(code)
+
+            _ = try await purchase()
+
+            XCTAssertEqual(revenueCat.purchaseCalls, [.latestTransactionID, .purchase], "\(code)")
+        }
+    }
+
+    // MARK: - RevenueCat throws after StoreKit charged
+
+    /// StoreKit's latest transaction ids for the product: before the
+    /// purchase, then after RevenueCat throws.
+    private func purchaseThatThrows(
+        transactionIDs before: UInt64?,
+        _ after: UInt64?
+    ) async -> Result<Galva.PurchaseResult, any Error> {
+        // `Purchases.purchase(product:)` also throws when only RevenueCat's
+        // receipt post failed, after StoreKit charged the user.
+        revenueCat.purchaseResult = .failure(ErrorCode.networkError)
+        revenueCat.latestTransactionIDs = [before, after]
+        do {
+            return .success(try await purchase())
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    func test_revenueCatThrows_noNewTransactionInStoreKit_fails() async {
+        let cases: [(String, UInt64?, UInt64?)] = [
+            ("still the one from before", 7, 7),
+            ("no transaction at all", nil, nil),
+            ("none now, though there was one", 7, nil),
+        ]
+        for (name, before, after) in cases {
+            revenueCat = FakeRevenueCat()
+            logger = RecordingLogger()
+
+            let result = await purchaseThatThrows(transactionIDs: before, after)
+
+            guard case .failure(Galva.PurchaseError.networkError) = result else {
+                XCTFail("\(name): expected RevenueCat's error, mapped, got \(result)")
+                continue
+            }
+            XCTAssertEqual(
+                revenueCat.purchaseCalls,
+                [.latestTransactionID, .purchase, .latestTransactionID],
+                "\(name): notes StoreKit's latest transaction before buying, and checks again after RevenueCat throws"
+            )
+            XCTAssertFalse(logger.messages.contains { $0.contains("after StoreKit completed") }, name)
+            XCTAssertEqual(revenueCat.syncCount, 0, name)
+            XCTAssertEqual(galva.calls, [], "\(name): not completed, nothing to reconcile")
+        }
+    }
+
+    func test_revenueCatThrows_newTransactionInStoreKit_isAPaidPurchase_andSyncsIt() async throws {
+        // The user paid; RevenueCat may already have finished the transaction
+        // (its server rejected the receipt), so it wouldn't post it again.
+        let cases: [(String, UInt64?, UInt64?)] = [
+            ("first purchase of the product", nil, 8),
+            ("bought before, a newer one now", 7, 8),
+        ]
+        for (name, before, after) in cases {
+            revenueCat = FakeRevenueCat()
+            logger = RecordingLogger()
+
+            _ = await purchaseThatThrows(transactionIDs: before, after)
+
+            let warning = try XCTUnwrap(
+                logger.entries.first { $0.message.contains("RevenueCat failed after StoreKit completed the purchase") },
+                name
+            )
+            XCTAssertEqual(warning.metadata["transactionId"], "8", name)
+            let fake = revenueCat!
+            let synced = await eventually { @Sendable in fake.syncCount == 1 }
+            XCTAssertTrue(synced, "\(name): RevenueCat is asked to record it")
+            // Then the transaction itself, for `.completed`. A
+            // `StoreKit.Transaction` can't be made in tests, so the fake has
+            // none to return and the purchase ends there.
+            XCTAssertEqual(fake.purchaseCalls, [.latestTransactionID, .purchase, .latestTransactionID, .latestTransaction], name)
+        }
+    }
+
+    func test_revenueCatThrows_paid_syncFails_isLogged() async {
+        revenueCat.syncError = ErrorCode.networkError
+
+        _ = await purchaseThatThrows(transactionIDs: nil, 8)
+
+        let logger = logger!
+        let logged = await eventually { @Sendable in logger.messages.contains { $0.contains("syncPurchases failed") } }
+        XCTAssertTrue(logged)
+        XCTAssertEqual(revenueCat.syncCount, 1)
+    }
+
+    // MARK: - RevenueCat returns no product
+
+    private func expectFailure(
+        _ matches: (Galva.PurchaseError) -> Bool,
+        _ message: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        do {
+            let result = try await purchase()
+            XCTFail("\(message): expected a failure, got \(result)", file: file, line: line)
+        } catch let error as Galva.PurchaseError {
+            XCTAssertTrue(matches(error), "\(message): got \(error)", file: file, line: line)
+        } catch {
+            XCTFail("\(message): unexpected error \(error)", file: file, line: line)
+        }
+    }
+
+    func test_productNotFound_storeKitOffline_isANetworkError() async {
+        // RevenueCat swallows the lookup error and returns no product.
+        revenueCat.purchaseResult = .success(.productNotFound)
+        revenueCat.storeKitLookupResult = .failure(StoreKitError.networkError(URLError(.notConnectedToInternet)))
+
+        await expectFailure({ if case .networkError = $0 { true } else { false } }, "offline")
+        XCTAssertEqual(revenueCat.purchaseCalls, [.latestTransactionID, .purchase, .storeKitLookup])
+    }
+
+    func test_productNotFound_storeKitFails_isFailed() async {
+        revenueCat.purchaseResult = .success(.productNotFound)
+        revenueCat.storeKitLookupResult = .failure(StoreKitError.unknown)
+
+        await expectFailure({ if case .failed = $0 { true } else { false } }, "StoreKit error")
+    }
+
+    func test_productNotFound_storeKitDoesNotKnowIt_isProductUnavailable() async {
+        revenueCat.purchaseResult = .success(.productNotFound)
+        revenueCat.storeKitLookupResult = .success(false)
+
+        await expectFailure({ $0 == .productUnavailable }, "unknown product")
+    }
+
+    func test_productNotFound_storeKitHasIt_isFailed_blamingRevenueCat() async {
+        revenueCat.purchaseResult = .success(.productNotFound)
+        revenueCat.storeKitLookupResult = .success(true)
+
+        await expectFailure({
+            if case .failed(let detail) = $0 { detail.contains("RevenueCat") } else { false }
+        }, "RevenueCat-only failure")
+    }
+
     func test_revenueCatThrowsIneligible_surfacesIneligibleForOffer() async {
         revenueCat.purchaseResult = .failure(ErrorCode.ineligibleError)
 
@@ -169,6 +318,14 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
         let nsError = ErrorCode.purchaseCancelledError as NSError
         guard case .cancelled = try RevenueCatPurchaseController.result(for: nsError) else {
             return XCTFail("expected .cancelled")
+        }
+    }
+
+    func test_errorMapping_galvaPurchaseError_passesThroughUnchanged() {
+        for error in [Galva.PurchaseError.networkError("offline"), .productUnavailable, .notAvailableInStorefront] {
+            XCTAssertThrowsError(try RevenueCatPurchaseController.result(for: error)) { thrown in
+                XCTAssertEqual(thrown as? Galva.PurchaseError, error)
+            }
         }
     }
 
