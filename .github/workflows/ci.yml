@@ -4,6 +4,9 @@
 #   • the 5.19.0 floor declared in Package.swift, on Xcode 26 — the oldest
 #     toolchain Galva supports, and the one that floor exists for;
 #   • the newest 5.x SwiftPM resolves, on the newest Xcode on the runner.
+# Each job also builds for the iOS Simulator: `swift test` runs on macOS, so
+# it never compiles the iOS-only code (the UIKit foreground signals, Galva's
+# UIKit/WebKit bridge, RevenueCat's iOS paths).
 
 name: CI
 
@@ -69,5 +72,17 @@ jobs:
           sed -i '' 's/"5.19.0"..<"6.0.0"/exact: "${{ matrix.revenuecat }}"/' Package.swift
           grep -n 'exact: "${{ matrix.revenuecat }}"' Package.swift
 
+      # Moves past anything a Package.resolved would pin, so this job tests
+      # the newest RevenueCat 5.x release.
+      - name: Update to the newest RevenueCat 5.x
+        if: matrix.revenuecat == 'latest'
+        run: swift package update
+
+      - name: Show the RevenueCat version under test
+        run: swift package show-dependencies | grep purchases-ios-spm
+
       - name: swift test
         run: swift test --parallel
+
+      - name: Build for iOS Simulator
+        run: xcodebuild -scheme GalvaRevenueCat -destination 'generic/platform=iOS Simulator' build

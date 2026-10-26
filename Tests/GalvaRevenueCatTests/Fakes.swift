@@ -37,14 +37,28 @@ final class Locked<Value>: @unchecked Sendable {
 }
 
 final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
+    /// The purchase-path calls, in the order they were made.
+    enum PurchaseCall: Equatable {
+        case latestTransaction
+        case latestTransactionID
+        case purchase
+        case storeKitLookup
+    }
+
     @Locked var isConfigured = true
     @Locked var appCompletesPurchases = false
+    /// RevenueCat's user when the sync connects. Tests that start RevenueCat
+    /// as someone set it before starting the sync.
+    @Locked var currentUser = RevenueCatCustomer.anonymous().user
     @Locked var purchaseResult: Result<RevenueCatPurchaseOutcome, any Error> = .success(.cancelled)
-    @Locked var recordError: (any Error)?
+    @Locked var storeKitLookupResult: Result<Bool, any Error> = .success(false)
     @Locked var syncError: (any Error)?
-    @Locked var latest: StoreKit.Transaction?
+    /// What `latestTransactionID(for:)` returns, one per call; `nil` once
+    /// they run out.
+    @Locked var latestTransactionIDs: [UInt64?] = []
 
     @Locked private(set) var purchasedProductIds: [String] = []
+    @Locked private(set) var purchaseCalls: [PurchaseCall] = []
     @Locked private(set) var recordCount = 0
     @Locked private(set) var syncCount = 0
     @Locked private(set) var customerUpdatesCalls = 0
@@ -59,12 +73,17 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
 
     func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome {
         $purchasedProductIds.withLock { $0.append(productId) }
+        $purchaseCalls.withLock { $0.append(.purchase) }
         return try purchaseResult.get()
+    }
+
+    func storeKitHasProduct(_ productId: String) async throws -> Bool {
+        $purchaseCalls.withLock { $0.append(.storeKitLookup) }
+        return try storeKitLookupResult.get()
     }
 
     func recordPurchase(_ result: Product.PurchaseResult) async throws {
         $recordCount.withLock { $0 += 1 }
-        if let recordError { throw recordError }
     }
 
     func syncPurchases() async throws {
@@ -72,8 +91,16 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
         if let syncError { throw syncError }
     }
 
+    /// Always `nil`: a `StoreKit.Transaction` can only come from a real
+    /// purchase.
     func latestTransaction(for productId: String) async -> StoreKit.Transaction? {
-        latest
+        $purchaseCalls.withLock { $0.append(.latestTransaction) }
+        return nil
+    }
+
+    func latestTransactionID(for productId: String) async -> UInt64? {
+        $purchaseCalls.withLock { $0.append(.latestTransactionID) }
+        return $latestTransactionIDs.withLock { $0.isEmpty ? nil : $0.removeFirst() }
     }
 
     func customerUpdates() -> AsyncStream<RevenueCatCustomer> {
@@ -90,25 +117,49 @@ final class FakeGalva: GalvaAdapter, @unchecked Sendable {
         case reconcile
     }
 
+    /// Galva's user as `AppUser` reports it. Tests set it; the fake's
+    /// `identify` and `logOut` leave it alone.
+    @Locked var identity = GalvaIdentity(userId: nil, appAccountToken: UUID())
     @Locked private(set) var calls: [Call] = []
     /// Whether any call arrived on the main thread.
     @Locked private(set) var calledOnMainThread = false
 
     func identify(userId: String, appAccountToken: UUID?) {
-        if Thread.isMainThread { calledOnMainThread = true }
-        $calls.withLock { $0.append(.identify(userId: userId, appAccountToken: appAccountToken)) }
+        record(.identify(userId: userId, appAccountToken: appAccountToken))
     }
 
     func logOut() {
-        $calls.withLock { $0.append(.logOut) }
+        record(.logOut)
     }
 
     func setTraits(_ traits: RevenueCatTraits) {
-        $calls.withLock { $0.append(.setTraits(traits)) }
+        record(.setTraits(traits))
     }
 
     func reconcileTransactions() {
-        $calls.withLock { $0.append(.reconcile) }
+        record(.reconcile)
+    }
+
+    private func record(_ call: Call) {
+        if Thread.isMainThread { calledOnMainThread = true }
+        $calls.withLock { $0.append(call) }
+    }
+}
+
+/// An in-memory `MirroredUserStore`, standing in for `UserDefaults`.
+final class FakeMirroredUserStore: MirroredUserStore, @unchecked Sendable {
+    /// What the previous launch left; tests set it before starting a sync.
+    @Locked var appUserID: String? = nil
+    /// Every value saved, in order.
+    @Locked private(set) var saves: [String?] = []
+
+    func load() -> String? {
+        appUserID
+    }
+
+    func save(_ appUserID: String?) {
+        self.appUserID = appUserID
+        $saves.withLock { $0.append(appUserID) }
     }
 }
 

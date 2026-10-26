@@ -53,6 +53,7 @@ public extension Galva.Integration {
                 logger: context.logger,
                 revenueCat: LiveRevenueCatAdapter(),
                 galva: LiveGalvaAdapter(),
+                store: LiveMirroredUserStore(),
                 foregrounds: .app()
             )
         }
@@ -64,7 +65,7 @@ enum RevenueCatIntegration {
     static let name = "revenuecat"
 
     /// This package's version. Bump on every release.
-    static let version = "0.1.0"
+    static let version = "1.0.0"
 
     /// Install the purchase controller right away — it falls back to Galva's
     /// StoreKit flow until RevenueCat is configured — and start the sync.
@@ -73,6 +74,7 @@ enum RevenueCatIntegration {
         logger: any GalvaLogger,
         revenueCat: any RevenueCatAdapter,
         galva: any GalvaAdapter,
+        store: any MirroredUserStore,
         foregrounds: ForegroundSignals
     ) {
         Galva.setPurchaseController(
@@ -81,6 +83,7 @@ enum RevenueCatIntegration {
         let sync = CustomerSync(
             followsRevenueCatIdentity: identity == .followRevenueCat,
             galva: galva,
+            store: store,
             logger: logger
         )
         // Runs for the life of the app; the task keeps `sync` alive.

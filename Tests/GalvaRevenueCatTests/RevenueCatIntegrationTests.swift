@@ -7,7 +7,7 @@
 //
 
 import Foundation
-import Galva
+@_spi(GalvaIntegration) import Galva
 @testable import GalvaRevenueCat
 import XCTest
 
@@ -31,6 +31,7 @@ final class RevenueCatIntegrationTests: XCTestCase {
             logger: RecordingLogger(),
             revenueCat: revenueCat,
             galva: galva,
+            store: FakeMirroredUserStore(),
             foregrounds: foreground.signals
         )
         revenueCat.updatesContinuation.yield(.identified("user_42"))
@@ -53,6 +54,7 @@ final class RevenueCatIntegrationTests: XCTestCase {
             logger: RecordingLogger(),
             revenueCat: revenueCat,
             galva: galva,
+            store: FakeMirroredUserStore(),
             foregrounds: FakeForeground().signals
         )
         revenueCat.updatesContinuation.yield(.identified("user_42", entitlements: ["pro"]))

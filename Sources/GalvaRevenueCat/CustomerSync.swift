@@ -6,22 +6,37 @@
 //
 //  Waits until RevenueCat is configured — checking right away, then on each
 //  app foreground — so `Purchases.configure` may run before or after
-//  `Galva.configure`. Updates are handled one at a time, in order, on this
-//  actor; `SyncState` decides what each one means for Galva.
+//  `Galva.configure`. Then it matches Galva to RevenueCat's current user
+//  straight away, without waiting for RevenueCat to emit, which it may not
+//  do for a while (offline, it has no `CustomerInfo` for a new user). After
+//  that, updates are handled one at a time, in order, on this actor;
+//  `SyncState` decides what each one means for Galva, given Galva's current
+//  user. The RevenueCat user the sync last mirrored into Galva is persisted,
+//  so the next launch can tell a logout it missed.
 //
 
 import Foundation
-import Galva
+@_spi(GalvaIntegration) import Galva
 
 actor CustomerSync {
 
     private var state: SyncState
     private let galva: any GalvaAdapter
+    private let store: any MirroredUserStore
     private let logger: any GalvaLogger
 
-    init(followsRevenueCatIdentity: Bool, galva: any GalvaAdapter, logger: any GalvaLogger) {
-        self.state = SyncState(followsRevenueCatIdentity: followsRevenueCatIdentity)
+    init(
+        followsRevenueCatIdentity: Bool,
+        galva: any GalvaAdapter,
+        store: any MirroredUserStore,
+        logger: any GalvaLogger
+    ) {
+        self.state = SyncState(
+            followsRevenueCatIdentity: followsRevenueCatIdentity,
+            lastMirroredUserID: store.load()
+        )
         self.galva = galva
+        self.store = store
         self.logger = logger
     }
 
@@ -38,18 +53,26 @@ actor CustomerSync {
             "purchasesCompletedBy": revenueCat.appCompletesPurchases ? "myApp" : "revenueCat",
             "identity": state.followsRevenueCatIdentity ? "followRevenueCat" : "manual",
         ])
+        let user = revenueCat.currentUser
+        carryOut { $0.connect(to: user, galva: galva.identity) }
         for await customer in revenueCat.customerUpdates() {
-            apply(customer)
-        }
-    }
-
-    func apply(_ customer: RevenueCatCustomer) {
-        for action in state.apply(customer) {
-            perform(action)
+            carryOut { $0.apply(customer, galva: galva.identity) }
         }
     }
 
     // MARK: - Private
+
+    /// Make the Galva calls `decide` returns, then persist the mirrored user
+    /// if it changed.
+    private func carryOut(_ decide: (inout SyncState) -> [SyncAction]) {
+        let mirrored = state.mirroredUserID
+        for action in decide(&state) {
+            perform(action)
+        }
+        if state.mirroredUserID != mirrored {
+            store.save(state.mirroredUserID)
+        }
+    }
 
     private func waitForConfiguration(
         of revenueCat: any RevenueCatAdapter,

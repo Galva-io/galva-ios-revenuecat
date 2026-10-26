@@ -43,6 +43,13 @@ let package = Package(
             dependencies: [
                 .product(name: "Galva", package: "galva-ios"),
                 .product(name: "RevenueCat", package: "purchases-ios-spm"),
+            ],
+            // Declares this package's one required-reason API (UserDefaults,
+            // CA92.1: it remembers the RevenueCat user it last mirrored into
+            // Galva), so apps don't have to. It collects nothing itself; what
+            // reaches Galva's servers is declared in Galva's own manifest.
+            resources: [
+                .copy("Resources/PrivacyInfo.xcprivacy"),
             ]
         ),
         .testTarget(
