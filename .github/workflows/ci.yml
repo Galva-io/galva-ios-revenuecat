@@ -41,9 +41,13 @@ jobs:
     env:
       # Package.swift points at a sibling galva-ios checkout until the
       # integrations API ships in a tagged galva-ios release, so CI clones
-      # galva-ios main next to this repo. Delete this and the clone step once
+      # galva-ios next to this repo. Delete this and the clone step once
       # Package.swift depends on the tagged URL instead.
-      GALVA_IOS_REF: main
+      #
+      # This package needs Galva-io/galva-ios#4 (an optional
+      # Galva.PromotionalOffer.compactJWS), so until that PR merges, CI
+      # clones its branch. Set this back to main once it has.
+      GALVA_IOS_REF: feat/unsigned-promotional-offers
     steps:
       - uses: actions/checkout@v4
 
