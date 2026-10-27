@@ -10,8 +10,6 @@ Galva.configure(apiKey: "pk_your_app_id", integrations: [.revenueCat()])
 - **Galva follows RevenueCat's identity.** `Purchases.logIn` and `logOut` identify and log out the Galva subscriber too, so you don't call `AppUser.identify` yourself.
 - **Both SDKs agree on purchases.** Galva matches each new purchase to the subscriber who made it, including purchases from your own RevenueCat paywall, right away.
 
-> **Status: pre-release.** `Package.swift` depends on a sibling `../galva-ios` checkout until galva-ios ships the integrations API in a tagged release.
-
 ---
 
 ## Quick start
@@ -175,6 +173,7 @@ Its log lines go through Galva's logger, under the `integration` category, and f
 |---|---|
 | **iOS** | 15.0 or later |
 | **Xcode** | 26 or later, as for Galva. With an older Xcode, SwiftPM stops when resolving the package. |
+| **Galva** | 1.0.0 up to, but not including, 2.0.0. Adding GalvaRevenueCat brings it in. |
 | **RevenueCat** | 5.19.0 up to, but not including, 6.0.0, from `purchases-ios-spm` through Swift Package Manager. With Xcode 27 the package requires 5.78.0 or later, since earlier RevenueCat releases don't compile there; an app pinned to one gets a resolution error naming the version it needs. |
 
 ## License

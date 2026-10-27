@@ -2,7 +2,7 @@
 
 All notable changes to GalvaRevenueCat are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the package follows [Semantic Versioning](https://semver.org/).
 
-## [1.0.0] - Unreleased
+## [1.0.0] - 2026-10-27
 
 First release.
 
@@ -16,6 +16,6 @@ First release.
 - RevenueCat's app user ID and active entitlements are sent to Galva as `$gv_rc_*` attributes: from RevenueCat's cached customer info as soon as the integration connects, then whenever they change. After the Galva subscriber changes, they're sent again the next time the app becomes active, or with the next RevenueCat update if that comes first.
 - A privacy manifest declaring the package's `UserDefaults` use (reason CA92.1).
 - Works whichever SDK is configured first: until RevenueCat is configured, offer purchases use Galva's StoreKit flow, and the integration connects within two seconds of `Purchases.configure` while the app is active.
-- Supports RevenueCat 5.19.0 up to 6.0.0, from `purchases-ios-spm` through Swift Package Manager. With Xcode 27 the package requires 5.78.0 or later, since earlier RevenueCat releases don't compile there. Requires Xcode 26 or later.
+- Supports RevenueCat 5.19.0 up to 6.0.0, from `purchases-ios-spm` through Swift Package Manager. With Xcode 27 the package requires 5.78.0 or later, since earlier RevenueCat releases don't compile there. Requires Galva 1.0.0 up to 2.0.0, and Xcode 26 or later.
 
 [1.0.0]: https://github.com/Galva-io/galva-ios-revenuecat/releases/tag/v1.0.0

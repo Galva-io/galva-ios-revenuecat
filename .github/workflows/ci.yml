@@ -38,16 +38,6 @@ jobs:
             runner: macos-latest
             xcode: newest
             revenuecat: latest
-    env:
-      # Package.swift points at a sibling galva-ios checkout until the
-      # integrations API ships in a tagged galva-ios release, so CI clones
-      # galva-ios next to this repo. Delete this and the clone step once
-      # Package.swift depends on the tagged URL instead.
-      #
-      # This package needs Galva-io/galva-ios#4 (an optional
-      # Galva.PromotionalOffer.compactJWS), so until that PR merges, CI
-      # clones its branch. Set this back to main once it has.
-      GALVA_IOS_REF: feat/unsigned-promotional-offers
     steps:
       - uses: actions/checkout@v4
 
@@ -56,9 +46,6 @@ jobs:
       # packages.
       - name: Check Package@swift-6.4.swift matches Package.swift
         run: diff <(grep -v -E '^\s*//|purchases-ios-spm\.git' Package.swift) <(grep -v -E '^\s*//|purchases-ios-spm\.git' Package@swift-6.4.swift)
-
-      - name: Check out galva-ios next to this repo
-        run: git clone --depth 1 --branch "$GALVA_IOS_REF" https://github.com/Galva-io/galva-ios.git ../galva-ios
 
       # Galva compiles only with Xcode 26+ (iOS 26 SDK StoreKit symbols,
       # back-deployed to iOS 15).
@@ -91,8 +78,8 @@ jobs:
         if: matrix.revenuecat == 'latest'
         run: swift package update
 
-      - name: Show the RevenueCat version under test
-        run: swift package show-dependencies | grep purchases-ios-spm
+      - name: Show the RevenueCat and Galva versions under test
+        run: swift package show-dependencies | grep -E 'purchases-ios-spm|galva-ios'
 
       - name: swift test
         run: swift test --parallel
