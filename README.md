@@ -44,7 +44,10 @@ targets: [
 </details>
 
 > [!IMPORTANT]
-> Add RevenueCat from **`https://github.com/RevenueCat/purchases-ios-spm`**, RevenueCat's recommended Swift Package Manager URL. If your app uses `purchases-ios`, switch to `purchases-ios-spm`: it's the same SDK at the same versions. Otherwise SwiftPM finds two packages that declare a `RevenueCat` module and stops the build.
+> Your app must get RevenueCat from Swift Package Manager, at **`https://github.com/RevenueCat/purchases-ios-spm`**, RevenueCat's recommended URL. GalvaRevenueCat depends on that package.
+>
+> - If your app uses `purchases-ios`, switch to `purchases-ios-spm`: it's the same SDK at the same versions. Otherwise SwiftPM finds two packages that declare a `RevenueCat` module and stops the build.
+> - If your app gets RevenueCat from CocoaPods, Carthage or a prebuilt framework, move it to Swift Package Manager. Otherwise your app ends up with two copies of RevenueCat, which SwiftPM can't detect: the build can fail, or the integration can talk to a copy your app never configured.
 
 ### 2. Configure
 
