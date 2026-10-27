@@ -53,6 +53,8 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
     }
 
     private let offer = Galva.PromotionalOffer(offerId: "winback_50", compactJWS: "h.p.s")
+    /// What arrives when Galva has no In-App Purchase key to sign the offer.
+    private let unsignedOffer = Galva.PromotionalOffer(offerId: "winback_50", compactJWS: nil)
 
     // MARK: - Routing
 
@@ -68,16 +70,45 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
     }
 
     func test_revenueCatMode_promotionalOffer_buysThroughRevenueCat_withTheOfferID() async throws {
-        // RevenueCat signs the App Store offer itself; Galva's JWS isn't used.
-        revenueCat.purchaseResult = .success(.cancelled)
+        // RevenueCat signs the App Store offer itself, so Galva's signature
+        // isn't needed: an unsigned offer works the same.
+        for promotionalOffer in [offer, unsignedOffer] {
+            revenueCat = FakeRevenueCat()
+            revenueCat.purchaseResult = .success(.cancelled)
 
-        let result = try await purchase(promotionalOffer: offer)
+            let result = try await purchase(promotionalOffer: promotionalOffer)
 
-        XCTAssertEqual(revenueCat.purchasedProductIds, ["com.app.pro.year"])
-        XCTAssertEqual(revenueCat.purchasedOfferIDs, ["winback_50"])
-        XCTAssertEqual(storeKitCalls, 0)
-        XCTAssertEqual(revenueCat.syncCount, 0)
-        guard case .cancelled = result else { return XCTFail("expected .cancelled, got \(result)") }
+            let name = promotionalOffer.compactJWS == nil ? "unsigned" : "signed by Galva"
+            XCTAssertEqual(revenueCat.purchasedProductIds, ["com.app.pro.year"], name)
+            XCTAssertEqual(revenueCat.purchasedOfferIDs, ["winback_50"], name)
+            XCTAssertEqual(storeKitCalls, 0, name)
+            XCTAssertEqual(revenueCat.syncCount, 0, name)
+            guard case .cancelled = result else { return XCTFail("\(name): expected .cancelled, got \(result)") }
+        }
+    }
+
+    func test_unsignedOffer_withoutRevenueCatSigning_isAnInvalidOffer() async throws {
+        // Galva's StoreKit purchase needs Galva's signature; each mode says
+        // how to get one.
+        let cases: [(String, (FakeRevenueCat) -> Void, String)] = [
+            (".myApp", { $0.appCompletesPurchases = true }, "In-App Purchase key in Galva"),
+            ("not configured", { $0.isConfigured = false }, "Purchases.configure"),
+        ]
+        for (name, setUp, fix) in cases {
+            revenueCat = FakeRevenueCat()
+            setUp(revenueCat)
+            logger = RecordingLogger()
+            storeKitCalls = 0
+
+            await expectFailure(promotionalOffer: unsignedOffer, {
+                if case .invalidOffer = $0 { true } else { false }
+            }, name)
+
+            XCTAssertEqual(storeKitCalls, 0, "\(name): no purchase started")
+            let entry = try XCTUnwrap(logger.entries.first { $0.message.contains("unsigned") }, name)
+            XCTAssertEqual(entry.level, .error, name)
+            XCTAssertTrue(entry.message.contains(fix), "\(name): \(entry.message)")
+        }
     }
 
     func test_myAppMode_usesGalvaStoreKitFlow_withOrWithoutAnOffer() async throws {

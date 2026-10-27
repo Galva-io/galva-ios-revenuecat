@@ -16,9 +16,11 @@
 //        finishes it. Its public API can't take Galva's JWS signature, so
 //        RevenueCat signs the same App Store offer itself
 //        (`promotionalOffer(forProductDiscount:product:)`), with the In-App
-//        Purchase key it also needs for StoreKit 2 purchases. Without the
-//        key, or a subscription to the product's group on the device, it
-//        throws before buying.
+//        Purchase key it also needs for StoreKit 2 purchases. Galva's
+//        signature isn't needed, so the offer may arrive unsigned, as it
+//        does when Galva has no In-App Purchase key. Without RevenueCat's
+//        key, or a subscription to the product's group on the device,
+//        RevenueCat throws before buying.
 //        RevenueCat also throws when StoreKit charged the user and only its
 //        own receipt post failed. Offline or on a server error (5xx) it leaves
 //        the transaction unfinished and posts it again on the next launch;
@@ -32,13 +34,16 @@
 //        directly whether the network failed or the App Store doesn't sell
 //        it.
 //  • The app completes purchases (`.myApp`)
-//      → Galva's StoreKit flow, with Galva's signature for a promotional
-//        offer, then `recordPurchase(_:)` (`syncPurchases()`
+//      → Galva's StoreKit flow, then `recordPurchase(_:)` (`syncPurchases()`
 //        when RevenueCat runs StoreKit 1). The app still finishes the
-//        transaction, exactly as for purchases it starts itself.
+//        transaction, exactly as for purchases it starts itself. A
+//        promotional offer needs Galva's signature here: an unsigned one
+//        fails as `invalidOffer`, since RevenueCat warns against using its
+//        own purchase in this mode.
 //  • RevenueCat not configured yet
 //      → Galva's StoreKit flow, transaction left unfinished for RevenueCat
-//        to pick up once it starts.
+//        to pick up once it starts. An unsigned offer fails as
+//        `invalidOffer`.
 //
 //  Only the routing decision runs on the main actor (the protocol
 //  requirement); RevenueCat and StoreKit do their work off it. Every
@@ -220,6 +225,19 @@ struct RevenueCatPurchaseController: GalvaPurchaseController {
         _ request: Galva.PurchaseRequest,
         handOff: HandOff
     ) async throws -> Galva.PurchaseResult {
+        // Galva's StoreKit purchase needs Galva's signature for an offer.
+        // Only RevenueCat's own purchase, in `.revenueCat` mode, has
+        // RevenueCat sign it.
+        if let offer = request.promotionalOffer, offer.compactJWS == nil {
+            let fix = handOff == .recordPurchase
+                ? "With purchasesAreCompletedBy .myApp, Galva signs promotional offers: add your In-App Purchase key in Galva."
+                : "RevenueCat isn't configured yet to sign it: call Purchases.configure(...) at launch."
+            logger.error(.integration, "The promotional offer is unsigned. \(fix)", metadata: [
+                "productId": request.productId,
+                "offerId": offer.offerId,
+            ])
+            throw Galva.PurchaseError.invalidOffer("unsigned promotional offer")
+        }
         let result = try await request.purchaseWithStoreKit()
         switch result {
         case .success(.verified(let transaction)):
