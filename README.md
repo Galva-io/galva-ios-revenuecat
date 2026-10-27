@@ -44,7 +44,10 @@ targets: [
 </details>
 
 > [!IMPORTANT]
-> Add RevenueCat from **`https://github.com/RevenueCat/purchases-ios-spm`**, RevenueCat's recommended Swift Package Manager URL. If your app uses `purchases-ios`, switch to `purchases-ios-spm`: it's the same SDK at the same versions. Otherwise SwiftPM finds two packages that declare a `RevenueCat` module and stops the build.
+> Your app must get RevenueCat from Swift Package Manager, at **`https://github.com/RevenueCat/purchases-ios-spm`**, RevenueCat's recommended URL. GalvaRevenueCat depends on that package.
+>
+> - If your app uses `purchases-ios`, switch to `purchases-ios-spm`: it's the same SDK at the same versions. Otherwise SwiftPM finds two packages that declare a `RevenueCat` module and stops the build.
+> - If your app gets RevenueCat from CocoaPods, Carthage or a prebuilt framework, move it to Swift Package Manager. Otherwise your app ends up with two copies of RevenueCat, which SwiftPM can't detect: the build can fail, or the integration can talk to a copy your app never configured.
 
 ### 2. Configure
 
@@ -74,9 +77,9 @@ struct MyApp: App {
 
 Galva presents its in-app messages on its own; see [Present messages yourself](https://github.com/Galva-io/galva-ios#present-messages-yourself) to control when they appear.
 
-From now on, use RevenueCat as usual. `Purchases.shared.logIn("user_42")` identifies the Galva subscriber as `user_42`. If you followed Galva's docs and call `AppUser.identify(userId: Purchases.shared.appUserID)`, you can remove that call.
+From now on, use RevenueCat as usual. Within two seconds, `Purchases.shared.logIn("user_42")` identifies the Galva subscriber as `user_42`. If you followed Galva's docs and call `AppUser.identify(userId: Purchases.shared.appUserID)`, you can remove that call.
 
-The order of the two `configure` calls doesn't matter. If RevenueCat is configured later, for example after an async step, the integration connects the next time your app becomes active. Until then, offers bought in Galva's messages use Galva's own StoreKit purchase.
+The order of the two `configure` calls doesn't matter. If RevenueCat is configured later, for example after an async step, the integration connects within two seconds while your app is active. Until then, offers bought in Galva's messages use Galva's own StoreKit purchase.
 
 ### 3. Connect RevenueCat to Galva
 
@@ -96,7 +99,7 @@ Run your app with `logLevel: .debug` in `Galva.configure`, and filter Console.ap
 subsystem:co.galva.sdk category:integration
 ```
 
-You should see `connected to RevenueCat`, with the RevenueCat version and mode. After `Purchases.shared.logIn`, you should see `identifying Galva user from RevenueCat`.
+You should see `connected to RevenueCat`, with the RevenueCat version and mode. Within two seconds of `Purchases.shared.logIn`, you should see `identifying Galva user from RevenueCat`.
 
 ---
 
@@ -120,31 +123,35 @@ Purchases and attributes still sync.
 | Switched from `X` to `Y` without logging out | `AppUser.logOut()`, then `identify(userId: "Y")` |
 | Logged out, back to anonymous | `AppUser.logOut()` |
 | Starts a launch as `X` while Galva is identified as someone else, for example after `Purchases.configure(withAPIKey:appUserID:)` | `AppUser.logOut()`, then `identify(userId: "X")` |
-| Logged out where the integration couldn't see it, for example offline or just before the app quit | `AppUser.logOut()`, at the next launch at the latest, even offline |
+| Logged out just before the app quit | `AppUser.logOut()` at the next launch, even offline |
 | Anonymous the whole time | Nothing. Galva may be identified separately. |
+
+RevenueCat reports changes to its customer, not to its app user ID. Its `customerInfoStream` sends nothing when `logIn` merges an anonymous user into a new ID, the usual sign-up, and nothing after `logOut` until RevenueCat has fetched its new anonymous user. So the integration reads RevenueCat's app user ID every two seconds while your app is active. Each time your app becomes active, it also reads RevenueCat's user and the customer info RevenueCat has cached for them. A `logIn` or `logOut` reaches Galva within two seconds, offline too.
 
 To catch changes from a previous launch, the integration remembers the RevenueCat app user ID it last passed to Galva. At launch, as soon as RevenueCat is configured, it compares that, and RevenueCat's current user, with Galva's current subscriber. While RevenueCat is anonymous, it logs out only a Galva subscriber it identified itself, so one your app identified stays until RevenueCat logs in as someone else.
 
-If the RevenueCat app user ID is a UUID, it's also passed as Galva's app account token, even when Galva is already identified with that ID. RevenueCat attaches that same UUID to the purchases it makes, so purchases from either SDK match the same subscriber.
+The integration never sets Galva's app account token. RevenueCat doesn't expose the token it attaches to its purchases, so Galva keeps its own and matches every purchase to the subscriber by its transaction ID, as described below.
 
 ### Purchases from Galva's messages
 
-| RevenueCat `purchasesAreCompletedBy` | Regular offer | Galva-signed promotional offer |
+| RevenueCat `purchasesAreCompletedBy` | Regular offer | Promotional offer |
 |---|---|---|
-| `.revenueCat` (default) | `Purchases.purchase(product:)`. RevenueCat records and finishes the transaction. | Galva's StoreKit purchase, since RevenueCat's API can't apply a Galva-signed offer. Then `syncPurchases()`, then the transaction is finished. |
-| `.myApp` | Galva's StoreKit purchase, then `recordPurchase(_:)`. The transaction stays unfinished for your app to finish. | Same. |
+| `.revenueCat` (default) | `Purchases.purchase(product:)`. RevenueCat records and finishes the transaction. | `Purchases.purchase(product:promotionalOffer:)`, with the offer signed by RevenueCat. RevenueCat records and finishes the transaction. |
+| `.myApp` | Galva's StoreKit purchase, then `recordPurchase(_:)`. The transaction stays unfinished for your app to finish. | Same, with the offer signed by Galva. |
 
-Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it for promotional offers, with `.myApp`, and until RevenueCat is configured. `Purchases.purchase(product:)` attaches a token only when the RevenueCat app user ID is a UUID, so anonymous subscribers and other IDs get none. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber.
+RevenueCat's API can't take the signature Galva makes for a promotional offer, so RevenueCat signs the same App Store offer itself, with the In-App Purchase key in your RevenueCat project. RevenueCat 5 needs that key to record StoreKit 2 purchases anyway, so with `.revenueCat` you don't need to add it to Galva: without it, Galva sends the offer unsigned. With `.myApp`, Galva's StoreKit purchase needs Galva's signature, so add the key in Galva. If RevenueCat's key is missing, the message shows an error, and the integration logs how to fix it. RevenueCat also won't sign an offer for someone with no subscription in the offer's group on the device, since Apple gives promotional offers only to current and past subscribers.
+
+Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it with `.myApp`, and until RevenueCat is configured. RevenueCat's purchases attach whatever token RevenueCat chooses, which its API doesn't expose. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber by its transaction ID.
 
 With `.myApp`, StoreKit doesn't put the transaction on `Transaction.updates`, and the integration has no callback for it. Your app picks it up from `Transaction.unfinished`, at launch and whenever it becomes active, and finishes it, as in Galva's [Finish offer purchases](https://github.com/Galva-io/galva-ios#6-finish-offer-purchases) step.
 
 If handing a purchase to RevenueCat fails, the subscriber doesn't see an error, because they've already paid, and RevenueCat picks up the unfinished transaction on the next launch.
 
-`Purchases.purchase(product:)` can also fail after StoreKit charged the subscriber, when only RevenueCat's post of the purchase to its server failed. The integration then finds the new transaction in StoreKit and reports the purchase as completed. It also calls `syncPurchases()`, because when RevenueCat's server rejects the post, RevenueCat finishes the transaction and doesn't post it again. A consumable finished that way no longer appears in StoreKit, so for that case the message shows RevenueCat's error.
+A RevenueCat purchase can also fail after StoreKit charged the subscriber, when only RevenueCat's post of the purchase to its server failed. The integration then finds the new transaction in StoreKit and reports the purchase as completed. It also calls `syncPurchases()`, because when RevenueCat's server rejects the post, RevenueCat finishes the transaction and doesn't post it again. A consumable finished that way no longer appears in StoreKit, so for that case the message shows RevenueCat's error.
 
 ### Attributes
 
-Each Galva subscriber gets these attributes, updated when they change. When the Galva subscriber changes, including when your app switches users with `.manual`, they're sent again with the next RevenueCat update.
+Each Galva subscriber gets these attributes, from RevenueCat's cached customer info as soon as the integration connects, then whenever they change. When the Galva subscriber changes, including when your app switches users with `.manual`, they're sent again the next time your app becomes active, or with the next RevenueCat update if that comes first.
 
 | Attribute | Value |
 |---|---|
@@ -157,7 +164,7 @@ Each Galva subscriber gets these attributes, updated when they change. When the 
 - **The sync stays off the main thread.** It runs on its own actor, and RevenueCat and StoreKit work in the background. The only main-thread work is deciding how to route a purchase someone starts in a Galva message.
 - **Your `PurchasesDelegate` is untouched.** The integration listens to RevenueCat's `customerInfoStream`, which supports any number of listeners.
 - **It installs Galva's purchase controller.** Don't call `Galva.setPurchaseController` yourself as well.
-- **It watches for your app becoming active only while waiting for RevenueCat**, and stops once it connects.
+- **It checks RevenueCat's app user ID every two seconds while your app is active.** RevenueCat keeps the ID in memory, so the check is cheap. The integration reads RevenueCat's cached customer info only when your app becomes active or that ID changes, and nothing runs while your app isn't active.
 - **It stores one value**: the RevenueCat app user ID it last passed to Galva, in `UserDefaults`, under a `co.galva.revenuecat.` key. Its privacy manifest declares that use, so you don't have to.
 
 Its log lines go through Galva's logger, under the `integration` category, and follow your `logLevel` and custom logger.
@@ -167,8 +174,8 @@ Its log lines go through Galva's logger, under the `integration` category, and f
 | | |
 |---|---|
 | **iOS** | 15.0 or later |
-| **Xcode** | 26 or later, as for Galva |
-| **RevenueCat** | 5.19.0 up to, but not including, 6.0.0, from `purchases-ios-spm`. With Xcode 27, RevenueCat itself needs 5.78.0 or later to compile. |
+| **Xcode** | 26 or later, as for Galva. With an older Xcode, SwiftPM stops when resolving the package. |
+| **RevenueCat** | 5.19.0 up to, but not including, 6.0.0, from `purchases-ios-spm` through Swift Package Manager. With Xcode 27 the package requires 5.78.0 or later, since earlier RevenueCat releases don't compile there; an app pinned to one gets a resolution error naming the version it needs. |
 
 ## License
 

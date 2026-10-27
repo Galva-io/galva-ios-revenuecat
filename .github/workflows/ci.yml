@@ -4,8 +4,11 @@
 #   • the 5.19.0 floor declared in Package.swift, on Xcode 26 — the oldest
 #     toolchain Galva supports, and the one that floor exists for;
 #   • the newest 5.x SwiftPM resolves, on the newest Xcode on the runner.
+# With Swift 6.4 and later (Xcode 27), SwiftPM reads Package@swift-6.4.swift
+# instead, whose floor is 5.78.0; a step checks it matches Package.swift
+# otherwise.
 # Each job also builds for the iOS Simulator: `swift test` runs on macOS, so
-# it never compiles the iOS-only code (the UIKit foreground signals, Galva's
+# it never compiles the iOS-only code (the UIKit app signals, Galva's
 # UIKit/WebKit bridge, RevenueCat's iOS paths).
 
 name: CI
@@ -38,11 +41,21 @@ jobs:
     env:
       # Package.swift points at a sibling galva-ios checkout until the
       # integrations API ships in a tagged galva-ios release, so CI clones
-      # galva-ios main next to this repo. Delete this and the clone step once
+      # galva-ios next to this repo. Delete this and the clone step once
       # Package.swift depends on the tagged URL instead.
-      GALVA_IOS_REF: main
+      #
+      # This package needs Galva-io/galva-ios#4 (an optional
+      # Galva.PromotionalOffer.compactJWS), so until that PR merges, CI
+      # clones its branch. Set this back to main once it has.
+      GALVA_IOS_REF: feat/unsigned-promotional-offers
     steps:
       - uses: actions/checkout@v4
+
+      # Package@swift-6.4.swift must be Package.swift with only RevenueCat's
+      # floor raised (comments aside), or the two toolchains build different
+      # packages.
+      - name: Check Package@swift-6.4.swift matches Package.swift
+        run: diff <(grep -v -E '^\s*//|purchases-ios-spm\.git' Package.swift) <(grep -v -E '^\s*//|purchases-ios-spm\.git' Package@swift-6.4.swift)
 
       - name: Check out galva-ios next to this repo
         run: git clone --depth 1 --branch "$GALVA_IOS_REF" https://github.com/Galva-io/galva-ios.git ../galva-ios

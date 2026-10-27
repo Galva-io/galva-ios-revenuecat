@@ -23,8 +23,9 @@ final class RevenueCatIntegrationTests: XCTestCase {
     func test_install_connectsOnceRevenueCatIsConfigured() async {
         let revenueCat = FakeRevenueCat()
         revenueCat.isConfigured = false
+        revenueCat.start(as: .identified("user_42"))
         let galva = FakeGalva()
-        let foreground = FakeForeground()
+        let app = FakeApp()
 
         RevenueCatIntegration.install(
             identity: .followRevenueCat,
@@ -32,21 +33,21 @@ final class RevenueCatIntegrationTests: XCTestCase {
             revenueCat: revenueCat,
             galva: galva,
             store: FakeMirroredUserStore(),
-            foregrounds: foreground.signals
+            app: app.signals
         )
-        revenueCat.updatesContinuation.yield(.identified("user_42"))
 
         revenueCat.isConfigured = true
-        foreground.becomeActive()
+        app.becomeActive()
 
         let identified = await eventually {
-            galva.calls.contains(.identify(userId: "user_42", appAccountToken: nil))
+            galva.calls.contains(.identify(userId: "user_42"))
         }
         XCTAssertTrue(identified)
     }
 
     func test_install_manualIdentity_onlySyncsTraits() async {
         let revenueCat = FakeRevenueCat()
+        revenueCat.start(as: .identified("user_42", entitlements: ["pro"]))
         let galva = FakeGalva()
 
         RevenueCatIntegration.install(
@@ -55,9 +56,8 @@ final class RevenueCatIntegrationTests: XCTestCase {
             revenueCat: revenueCat,
             galva: galva,
             store: FakeMirroredUserStore(),
-            foregrounds: FakeForeground().signals
+            app: FakeApp().signals
         )
-        revenueCat.updatesContinuation.yield(.identified("user_42", entitlements: ["pro"]))
 
         let synced = await eventually { !galva.calls.isEmpty }
         XCTAssertTrue(synced)
