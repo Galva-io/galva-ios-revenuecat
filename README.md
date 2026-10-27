@@ -80,13 +80,13 @@ The order of the two `configure` calls doesn't matter. If RevenueCat is configur
 
 ### 3. Connect RevenueCat to Galva
 
-The app integration covers your app. Galva also needs RevenueCat's subscription events, from its webhook:
+The app integration covers your app. Galva also needs your subscription data: RevenueCat forwards the App Store Server Notifications it receives to Galva, and a secret API key lets Galva match each purchase to a subscriber.
 
 1. In Galva, open **Admin → Settings → Connect → Billing Connections** and select **RevenueCat**.
-2. In RevenueCat, create a V2 secret API key and add it to Galva.
-3. In RevenueCat, add a webhook with Galva's webhook URL and authorization header, with every event type on.
+2. In RevenueCat, create a V2 secret API key with read-only access to customer information. Give Galva the key and your RevenueCat project ID.
+3. In RevenueCat, open your iOS app's **Apple Server to Server notification settings** and paste Galva's relay URL into **Apple Server Notification Forwarding URL**. Galva doesn't use a RevenueCat webhook.
 
-See [Connect RevenueCat](https://docs.galva.io/integrations/revenuecat) for each step. The RevenueCat connection is in development.
+See [Connect RevenueCat](https://docs.galva.io/integrations/revenuecat#send-subscription-data-through-revenuecat) for each step. The RevenueCat connection is in development: for now, the Galva team adds your key and project ID and gives you the relay URL.
 
 ### 4. Check it works
 
