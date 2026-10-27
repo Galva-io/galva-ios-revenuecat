@@ -55,6 +55,8 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
     @Locked var latestTransactionIDs: [UInt64?] = []
 
     @Locked private(set) var purchasedProductIds: [String] = []
+    /// The promotional offer passed with each purchase, `nil` for none.
+    @Locked private(set) var purchasedOfferIDs: [String?] = []
     @Locked private(set) var purchaseCalls: [PurchaseCall] = []
     @Locked private(set) var recordCount = 0
     @Locked private(set) var syncCount = 0
@@ -64,8 +66,9 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
 
     let frameworkVersion = "5.98.0"
 
-    func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome {
+    func purchase(productId: String, promotionalOfferID: String?) async throws -> RevenueCatPurchaseOutcome {
         $purchasedProductIds.withLock { $0.append(productId) }
+        $purchasedOfferIDs.withLock { $0.append(promotionalOfferID) }
         $purchaseCalls.withLock { $0.append(.purchase) }
         return try purchaseResult.get()
     }

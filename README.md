@@ -131,18 +131,20 @@ The integration never sets Galva's app account token. RevenueCat doesn't expose 
 
 ### Purchases from Galva's messages
 
-| RevenueCat `purchasesAreCompletedBy` | Regular offer | Galva-signed promotional offer |
+| RevenueCat `purchasesAreCompletedBy` | Regular offer | Promotional offer |
 |---|---|---|
-| `.revenueCat` (default) | `Purchases.purchase(product:)`. RevenueCat records and finishes the transaction. | Galva's StoreKit purchase, since RevenueCat's API can't apply a Galva-signed offer. Then `syncPurchases()`, then the transaction is finished. |
-| `.myApp` | Galva's StoreKit purchase, then `recordPurchase(_:)`. The transaction stays unfinished for your app to finish. | Same. |
+| `.revenueCat` (default) | `Purchases.purchase(product:)`. RevenueCat records and finishes the transaction. | `Purchases.purchase(product:promotionalOffer:)`, with the offer signed by RevenueCat. RevenueCat records and finishes the transaction. |
+| `.myApp` | Galva's StoreKit purchase, then `recordPurchase(_:)`. The transaction stays unfinished for your app to finish. | Same, with the offer signed by Galva. |
 
-Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it for promotional offers, with `.myApp`, and until RevenueCat is configured. `Purchases.purchase(product:)` attaches whatever token RevenueCat chooses, which its API doesn't expose. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber by its transaction ID.
+RevenueCat's API can't take the signature Galva makes for a promotional offer, so RevenueCat signs the same App Store offer itself, with the In-App Purchase key in your RevenueCat project. RevenueCat 5 needs that key to record StoreKit 2 purchases anyway. If the key is missing, the message shows an error, and the integration logs how to fix it. RevenueCat also won't sign an offer for someone with no subscription in the offer's group on the device, since Apple gives promotional offers only to current and past subscribers.
+
+Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it with `.myApp`, and until RevenueCat is configured. RevenueCat's purchases attach whatever token RevenueCat chooses, which its API doesn't expose. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber by its transaction ID.
 
 With `.myApp`, StoreKit doesn't put the transaction on `Transaction.updates`, and the integration has no callback for it. Your app picks it up from `Transaction.unfinished`, at launch and whenever it becomes active, and finishes it, as in Galva's [Finish offer purchases](https://github.com/Galva-io/galva-ios#6-finish-offer-purchases) step.
 
 If handing a purchase to RevenueCat fails, the subscriber doesn't see an error, because they've already paid, and RevenueCat picks up the unfinished transaction on the next launch.
 
-`Purchases.purchase(product:)` can also fail after StoreKit charged the subscriber, when only RevenueCat's post of the purchase to its server failed. The integration then finds the new transaction in StoreKit and reports the purchase as completed. It also calls `syncPurchases()`, because when RevenueCat's server rejects the post, RevenueCat finishes the transaction and doesn't post it again. A consumable finished that way no longer appears in StoreKit, so for that case the message shows RevenueCat's error.
+A RevenueCat purchase can also fail after StoreKit charged the subscriber, when only RevenueCat's post of the purchase to its server failed. The integration then finds the new transaction in StoreKit and reports the purchase as completed. It also calls `syncPurchases()`, because when RevenueCat's server rejects the post, RevenueCat finishes the transaction and doesn't post it again. A consumable finished that way no longer appears in StoreKit, so for that case the message shows RevenueCat's error.
 
 ### Attributes
 

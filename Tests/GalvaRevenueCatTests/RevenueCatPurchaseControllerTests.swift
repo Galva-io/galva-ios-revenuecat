@@ -6,8 +6,8 @@
 //  and the RevenueCat error → Galva outcome mapping. A verified StoreKit
 //  transaction can't be constructed in unit tests — not even with
 //  `SKTestSession`, which `swift test` isn't entitled to — so the
-//  post-purchase hand-off (`recordPurchase` / `syncPurchases` + `finish`) is
-//  covered by sandbox QA instead. "RevenueCat threw after StoreKit charged"
+//  post-purchase hand-off (`recordPurchase`, or `syncPurchases` under
+//  StoreKit 1) is covered by sandbox QA instead. "RevenueCat threw after StoreKit charged"
 //  is told by StoreKit's transaction ids, which the fake stands in for, so
 //  it's pinned up to the final `.completed`, which needs a real transaction.
 //
@@ -62,29 +62,38 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
         let result = try await purchase()
 
         XCTAssertEqual(revenueCat.purchasedProductIds, ["com.app.pro.year"])
+        XCTAssertEqual(revenueCat.purchasedOfferIDs, [nil])
         XCTAssertEqual(storeKitCalls, 0)
         guard case .cancelled = result else { return XCTFail("expected .cancelled, got \(result)") }
     }
 
-    func test_revenueCatMode_promotionalOffer_usesGalvaStoreKitFlow() async throws {
-        // RevenueCat's public API can't apply a Galva-signed JWS offer.
+    func test_revenueCatMode_promotionalOffer_buysThroughRevenueCat_withTheOfferID() async throws {
+        // RevenueCat signs the App Store offer itself; Galva's JWS isn't used.
+        revenueCat.purchaseResult = .success(.cancelled)
+
         let result = try await purchase(promotionalOffer: offer)
 
-        XCTAssertEqual(storeKitCalls, 1)
-        XCTAssertEqual(revenueCat.purchasedProductIds, [])
-        XCTAssertEqual(revenueCat.syncCount, 0, "nothing to sync for a cancelled purchase")
+        XCTAssertEqual(revenueCat.purchasedProductIds, ["com.app.pro.year"])
+        XCTAssertEqual(revenueCat.purchasedOfferIDs, ["winback_50"])
+        XCTAssertEqual(storeKitCalls, 0)
+        XCTAssertEqual(revenueCat.syncCount, 0)
         guard case .cancelled = result else { return XCTFail("expected .cancelled, got \(result)") }
     }
 
-    func test_myAppMode_usesGalvaStoreKitFlow() async throws {
-        revenueCat.appCompletesPurchases = true
+    func test_myAppMode_usesGalvaStoreKitFlow_withOrWithoutAnOffer() async throws {
+        for promotionalOffer in [nil, offer] {
+            revenueCat = FakeRevenueCat()
+            revenueCat.appCompletesPurchases = true
+            storeKitCalls = 0
 
-        let result = try await purchase(storeKitResult: .pending)
+            let result = try await purchase(promotionalOffer: promotionalOffer, storeKitResult: .pending)
 
-        XCTAssertEqual(storeKitCalls, 1)
-        XCTAssertEqual(revenueCat.purchasedProductIds, [])
-        XCTAssertEqual(revenueCat.recordCount, 0, "pending purchases are recorded once they complete")
-        guard case .pending = result else { return XCTFail("expected .pending, got \(result)") }
+            let name = promotionalOffer == nil ? "regular offer" : "promotional offer"
+            XCTAssertEqual(storeKitCalls, 1, name)
+            XCTAssertEqual(revenueCat.purchasedProductIds, [], name)
+            XCTAssertEqual(revenueCat.recordCount, 0, "\(name): pending purchases are recorded once they complete")
+            guard case .pending = result else { return XCTFail("\(name): expected .pending, got \(result)") }
+        }
     }
 
     func test_revenueCatNotConfigured_fallsBackToGalvaStoreKitFlow() async throws {
@@ -229,13 +238,14 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
     // MARK: - RevenueCat returns no product
 
     private func expectFailure(
+        promotionalOffer: Galva.PromotionalOffer? = nil,
         _ matches: (Galva.PurchaseError) -> Bool,
         _ message: String,
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
         do {
-            let result = try await purchase()
+            let result = try await purchase(promotionalOffer: promotionalOffer)
             XCTFail("\(message): expected a failure, got \(result)", file: file, line: line)
         } catch let error as Galva.PurchaseError {
             XCTAssertTrue(matches(error), "\(message): got \(error)", file: file, line: line)
@@ -276,17 +286,37 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
         }, "RevenueCat-only failure")
     }
 
+    // MARK: - Promotional offers RevenueCat can't apply
+
     func test_revenueCatThrowsIneligible_surfacesIneligibleForOffer() async {
+        // RevenueCat won't sign an offer without a subscription to the
+        // product's group on the device.
         revenueCat.purchaseResult = .failure(ErrorCode.ineligibleError)
 
-        do {
-            _ = try await purchase()
-            XCTFail("expected a failure")
-        } catch let error as Galva.PurchaseError {
-            XCTAssertEqual(error, .ineligibleForOffer)
-        } catch {
-            XCTFail("unexpected error \(error)")
-        }
+        await expectFailure(promotionalOffer: offer, { $0 == .ineligibleForOffer }, "ineligible")
+        XCTAssertEqual(storeKitCalls, 0)
+    }
+
+    func test_offerTheProductDoesNotHave_isAnInvalidOffer() async {
+        revenueCat.purchaseResult = .success(.offerNotFound)
+
+        await expectFailure(promotionalOffer: offer, {
+            if case .invalidOffer(let detail) = $0 { detail.contains("winback_50") } else { false }
+        }, "unknown offer")
+        XCTAssertEqual(storeKitCalls, 0, "not bought another way")
+    }
+
+    func test_revenueCatCannotSignTheOffer_isAnInvalidOffer_andSaysHowToFixIt() async throws {
+        // Its project has no In-App Purchase key for the app.
+        revenueCat.purchaseResult = .failure(ErrorCode.invalidAppleSubscriptionKeyError)
+
+        await expectFailure(promotionalOffer: offer, {
+            if case .invalidOffer = $0 { true } else { false }
+        }, "no In-App Purchase key")
+
+        let entry = try XCTUnwrap(logger.entries.first { $0.message.contains("In-App Purchase key") })
+        XCTAssertEqual(entry.level, .error)
+        XCTAssertEqual(storeKitCalls, 0, "not bought another way")
     }
 
     // MARK: - Error mapping
@@ -297,6 +327,7 @@ final class RevenueCatPurchaseControllerTests: XCTestCase {
             (.purchaseNotAllowedError, { $0 == .purchaseNotAllowed }),
             (.ineligibleError, { $0 == .ineligibleForOffer }),
             (.invalidPromotionalOfferError, { if case .invalidOffer = $0 { true } else { false } }),
+            (.invalidAppleSubscriptionKeyError, { if case .invalidOffer = $0 { true } else { false } }),
             (.networkError, { if case .networkError = $0 { true } else { false } }),
             (.offlineConnectionError, { if case .networkError = $0 { true } else { false } }),
             (.storeProblemError, { if case .failed = $0 { true } else { false } }),

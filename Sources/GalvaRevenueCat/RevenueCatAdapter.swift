@@ -63,6 +63,9 @@ enum RevenueCatPurchaseOutcome: Sendable {
     /// RevenueCat returned no product for the id, so nothing was bought. It
     /// swallows the lookup's error, so this doesn't say why.
     case productNotFound
+    /// The product has no promotional offer with the id, so nothing was
+    /// bought.
+    case offerNotFound
 }
 
 protocol RevenueCatAdapter: Sendable {
@@ -80,7 +83,11 @@ protocol RevenueCatAdapter: Sendable {
     /// them. The user is known as soon as RevenueCat is configured, even
     /// offline; the customer info once RevenueCat has fetched it for them.
     func snapshot() -> RevenueCatSnapshot
-    func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome
+    /// Buys the product with RevenueCat, applying the App Store promotional
+    /// offer `promotionalOfferID` when there is one. RevenueCat signs the
+    /// offer itself, with the In-App Purchase key in its project: its public
+    /// API can't take a signature made elsewhere.
+    func purchase(productId: String, promotionalOfferID: String?) async throws -> RevenueCatPurchaseOutcome
     /// Looks the product up with StoreKit directly: `false` when the App
     /// Store doesn't sell it, StoreKit's error when the lookup fails.
     func storeKitHasProduct(_ productId: String) async throws -> Bool
@@ -124,12 +131,21 @@ struct LiveRevenueCatAdapter: RevenueCatAdapter {
         return RevenueCatSnapshot(uncached: Self.currentUser(purchases))
     }
 
-    func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome {
+    func purchase(productId: String, promotionalOfferID: String?) async throws -> RevenueCatPurchaseOutcome {
         let products = await Purchases.shared.products([productId])
         guard let product = products.first(where: { $0.productIdentifier == productId }) else {
             return .productNotFound
         }
-        let result = try await Purchases.shared.purchase(product: product)
+        let result: PurchaseResultData
+        if let promotionalOfferID {
+            guard let discount = product.discounts.first(where: { $0.offerIdentifier == promotionalOfferID }) else {
+                return .offerNotFound
+            }
+            let offer = try await Purchases.shared.promotionalOffer(forProductDiscount: discount, product: product)
+            result = try await Purchases.shared.purchase(product: product, promotionalOffer: offer)
+        } else {
+            result = try await Purchases.shared.purchase(product: product)
+        }
         if result.userCancelled { return .cancelled }
         return .completed(result.transaction?.sk2Transaction)
     }
