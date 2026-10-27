@@ -26,10 +26,9 @@ let package = Package(
         ),
     ],
     dependencies: [
-        // Local sibling checkout while galva-ios's purchase-controller seam is
-        // unreleased. Swap for the tagged release before publishing:
-        //     .package(url: "https://github.com/Galva-io/galva-ios", from: "1.0.0"),
-        .package(path: "../galva-ios"),
+        // Galva 1.0.0 is the first release with the integrations API and the
+        // purchase controller this package plugs into.
+        .package(url: "https://github.com/Galva-io/galva-ios", from: "1.0.0"),
         // RevenueCat's recommended SwiftPM URL. Apps must add RevenueCat with
         // this same URL — an app on `purchases-ios` would end up with two
         // packages declaring a `RevenueCat` module.
