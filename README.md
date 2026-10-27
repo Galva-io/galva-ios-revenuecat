@@ -171,8 +171,8 @@ Its log lines go through Galva's logger, under the `integration` category, and f
 | | |
 |---|---|
 | **iOS** | 15.0 or later |
-| **Xcode** | 26 or later, as for Galva |
-| **RevenueCat** | 5.19.0 up to, but not including, 6.0.0, from `purchases-ios-spm`. With Xcode 27, RevenueCat itself needs 5.78.0 or later to compile. |
+| **Xcode** | 26 or later, as for Galva. With an older Xcode, SwiftPM stops when resolving the package. |
+| **RevenueCat** | 5.19.0 up to, but not including, 6.0.0, from `purchases-ios-spm` through Swift Package Manager. With Xcode 27 the package requires 5.78.0 or later, since earlier RevenueCat releases don't compile there; an app pinned to one gets a resolution error naming the version it needs. |
 
 ## License
 
