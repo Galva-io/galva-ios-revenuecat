@@ -16,9 +16,7 @@
 //  configured (even offline, with no `CustomerInfo` to emit), with Galva's
 //  current user, and with the user the sync last mirrored, which
 //  `CustomerSync` persists across launches:
-//  • Identified as X, Galva already X → nothing. Unless X is a UUID that
-//    isn't Galva's `appAccountToken` yet (the app identified Galva as X
-//    without it) → identify(X) again, with the token.
+//  • Identified as X, Galva already X → nothing.
 //  • Identified as X, Galva identified as someone else
 //      → logOut, then identify(X), so X never inherits their anonymous id or
 //        `appAccountToken` override.
@@ -42,9 +40,14 @@
 //    extra logOut that causes is harmless.
 //  • Anonymous the whole time → nothing; the app may identify Galva itself.
 //  With `.manual` the sync makes none of these calls and mirrors nobody.
-//  A UUID app user ID is also passed as the `appAccountToken`: RevenueCat
-//  attaches exactly that UUID to the purchases it makes, so purchases from
-//  both SDKs resolve to the same Galva account.
+//
+//  The sync never sets Galva's `appAccountToken`. RevenueCat doesn't expose
+//  the token it attaches to the purchases it makes, if any (today it sends
+//  the app user ID only when that parses as a UUID), so deriving one from
+//  the app user ID would guess at RevenueCat's internals and replace the
+//  token Galva attaches to its own purchases. Galva matches every purchase,
+//  RevenueCat's included, to its subscriber by transaction ID instead
+//  (`Galva.reconcileTransactions()`).
 //
 //  Traits
 //  ──────
@@ -70,7 +73,7 @@ import Foundation
 
 /// A Galva call to make.
 enum SyncAction: Equatable, Sendable {
-    case identify(userId: String, appAccountToken: UUID?)
+    case identify(userId: String)
     case logOut
     case setTraits(RevenueCatTraits)
     case reconcileTransactions
@@ -186,10 +189,7 @@ struct SyncState: Sendable {
             return [.logOut]
         }
         guard let galvaUserID = galva.userId else { return [identify(revenueCat)] }
-        guard galvaUserID == revenueCat.appUserID else { return [.logOut, identify(revenueCat)] }
-        // Already X, but maybe identified without X's token.
-        let token = UUID(uuidString: revenueCat.appUserID)
-        return token == nil || token == galva.appAccountToken ? [] : [identify(revenueCat)]
+        return galvaUserID == revenueCat.appUserID ? [] : [.logOut, identify(revenueCat)]
     }
 
     private func identityActions(for revenueCat: RevenueCatUser, galvaUserID: String?) -> [SyncAction] {
@@ -204,6 +204,6 @@ struct SyncState: Sendable {
     }
 
     private func identify(_ revenueCat: RevenueCatUser) -> SyncAction {
-        .identify(userId: revenueCat.appUserID, appAccountToken: UUID(uuidString: revenueCat.appUserID))
+        .identify(userId: revenueCat.appUserID)
     }
 }

@@ -111,7 +111,7 @@ final class FakeRevenueCat: RevenueCatAdapter, @unchecked Sendable {
 
 final class FakeGalva: GalvaAdapter, @unchecked Sendable {
     enum Call: Equatable {
-        case identify(userId: String, appAccountToken: UUID?)
+        case identify(userId: String)
         case logOut
         case setTraits(RevenueCatTraits)
         case reconcile
@@ -124,8 +124,8 @@ final class FakeGalva: GalvaAdapter, @unchecked Sendable {
     /// Whether any call arrived on the main thread.
     @Locked private(set) var calledOnMainThread = false
 
-    func identify(userId: String, appAccountToken: UUID?) {
-        record(.identify(userId: userId, appAccountToken: appAccountToken))
+    func identify(userId: String) {
+        record(.identify(userId: userId))
     }
 
     func logOut() {

@@ -16,7 +16,7 @@ protocol GalvaAdapter: Sendable {
     /// installs the integration once `configure` has loaded the persisted
     /// identity.
     var identity: GalvaIdentity { get }
-    func identify(userId: String, appAccountToken: UUID?)
+    func identify(userId: String)
     func logOut()
     func setTraits(_ traits: RevenueCatTraits)
     func reconcileTransactions()
@@ -28,8 +28,8 @@ struct LiveGalvaAdapter: GalvaAdapter {
         GalvaIdentity(userId: AppUser.identifiedUserId, appAccountToken: AppUser.appAccountToken)
     }
 
-    func identify(userId: String, appAccountToken: UUID?) {
-        AppUser.identify(userId: userId, appAccountToken: appAccountToken)
+    func identify(userId: String) {
+        AppUser.identify(userId: userId)
     }
 
     func logOut() {

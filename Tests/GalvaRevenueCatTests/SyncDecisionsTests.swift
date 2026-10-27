@@ -53,24 +53,24 @@ final class SyncDecisionsTests: XCTestCase {
         let cases: [(String, [RevenueCatCustomer], [SyncAction])] = [
             ("identified → identify",
              [.identified("user_42")],
-             [.identify(userId: "user_42", appAccountToken: nil)]),
+             [.identify(userId: "user_42")]),
 
-            ("UUID app user ID → also the appAccountToken",
+            ("UUID app user ID → identified like any other, with no appAccountToken",
              [.identified(uuidID)],
-             [.identify(userId: uuidID, appAccountToken: UUID(uuidString: uuidID))]),
+             [.identify(userId: uuidID)]),
 
             ("same user again → identify once",
              [.identified("user_42"), .identified("user_42", entitlements: ["pro"])],
-             [.identify(userId: "user_42", appAccountToken: nil)]),
+             [.identify(userId: "user_42")]),
 
             ("switch users → log out before identifying",
              [.identified("user_a"), .identified("user_b")],
-             [.identify(userId: "user_a", appAccountToken: nil), .logOut,
-              .identify(userId: "user_b", appAccountToken: nil)]),
+             [.identify(userId: "user_a"), .logOut,
+              .identify(userId: "user_b")]),
 
             ("identified → anonymous → log out",
              [.identified("user_42"), .anonymous()],
-             [.identify(userId: "user_42", appAccountToken: nil), .logOut]),
+             [.identify(userId: "user_42"), .logOut]),
 
             ("anonymous throughout → never touch Galva identity",
              [.anonymous("$RCAnonymousID:1"), .anonymous("$RCAnonymousID:2")],
@@ -78,8 +78,8 @@ final class SyncDecisionsTests: XCTestCase {
 
             ("log in again after logging out",
              [.identified("user_42"), .anonymous(), .identified("user_42")],
-             [.identify(userId: "user_42", appAccountToken: nil), .logOut,
-              .identify(userId: "user_42", appAccountToken: nil)]),
+             [.identify(userId: "user_42"), .logOut,
+              .identify(userId: "user_42")]),
         ]
         for (name, updates, expected) in cases {
             XCTAssertEqual(actions(updates, keep: isIdentity), expected, name)
@@ -108,11 +108,11 @@ final class SyncDecisionsTests: XCTestCase {
             // the app killed before the sync saw the switch.
             ("Galva identified as someone else → log out, then identify X",
              Self.galva("user_a"),
-             [.logOut, .identify(userId: "user_b", appAccountToken: nil)]),
+             [.logOut, .identify(userId: "user_b")]),
 
             ("Galva anonymous → identify X",
              Self.anonymousGalva,
-             [.identify(userId: "user_b", appAccountToken: nil)]),
+             [.identify(userId: "user_b")]),
         ]
         for (name, galva, expected) in cases {
             for lastMirrored in [nil, "user_a", "user_b"] {
@@ -160,7 +160,7 @@ final class SyncDecisionsTests: XCTestCase {
         XCTAssertEqual(state.connect(to: RevenueCatCustomer.anonymous().user, galva: Self.galva("user_a")), [.logOut])
         XCTAssertEqual(state.apply(.anonymous(), galva: Self.anonymousGalva).filter(isIdentity), [])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: Self.anonymousGalva).filter(isIdentity), [
-            .identify(userId: "user_b", appAccountToken: nil),
+            .identify(userId: "user_b"),
         ])
     }
 
@@ -169,7 +169,7 @@ final class SyncDecisionsTests: XCTestCase {
         let customer = RevenueCatCustomer.identified("user_b", purchases: ["pro.month": Date(timeIntervalSince1970: 1_800_000_000)])
 
         XCTAssertEqual(state.connect(to: customer.user, galva: Self.galva("user_a")), [
-            .logOut, .identify(userId: "user_b", appAccountToken: nil),
+            .logOut, .identify(userId: "user_b"),
         ])
         XCTAssertEqual(
             state.apply(customer, galva: Self.galva("user_b")),
@@ -178,19 +178,17 @@ final class SyncDecisionsTests: XCTestCase {
         )
     }
 
-    func test_launch_galvaAlreadyX_reassertsAUUIDAppUserIDAsTheToken() {
+    func test_launch_galvaAlreadyX_makesNoCalls_evenForAUUIDAppUserID() {
         // E.g. the app called `AppUser.identify(userId: Purchases.shared.appUserID)`
-        // before adopting the integration: same user, no token.
+        // before adopting the integration. RevenueCat doesn't expose the
+        // token it attaches to its purchases, so a UUID app user ID is no
+        // reason to set Galva's.
         let cases: [(String, String, GalvaIdentity, [SyncAction])] = [
-            ("UUID app user ID, Galva's token is its anonymous one → identify again with the token",
+            ("UUID app user ID, Galva's own token → nothing",
              uuidID, GalvaIdentity(userId: uuidID, appAccountToken: UUID()),
-             [.identify(userId: uuidID, appAccountToken: UUID(uuidString: uuidID))]),
-
-            ("UUID app user ID, Galva already has it as the token → nothing",
-             uuidID, GalvaIdentity(userId: uuidID, appAccountToken: UUID(uuidString: uuidID)),
              []),
 
-            ("other app user IDs carry no token → nothing",
+            ("other app user ID → nothing",
              "user_b", Self.galva("user_b"),
              []),
         ]
@@ -212,19 +210,19 @@ final class SyncDecisionsTests: XCTestCase {
         let cases: [(String, GalvaIdentity, GalvaIdentity, [SyncAction])] = [
             ("app identified Galva before launch",
              appUser, appUser,
-             [.logOut, .identify(userId: "rc_user", appAccountToken: nil)]),
+             [.logOut, .identify(userId: "rc_user")]),
 
             ("app identified Galva during the session",
              Self.anonymousGalva, appUser,
-             [.logOut, .identify(userId: "rc_user", appAccountToken: nil)]),
+             [.logOut, .identify(userId: "rc_user")]),
 
             ("app identified Galva as the same user → just identify",
              Self.anonymousGalva, Self.galva("rc_user"),
-             [.identify(userId: "rc_user", appAccountToken: nil)]),
+             [.identify(userId: "rc_user")]),
 
             ("Galva anonymous throughout → just identify",
              Self.anonymousGalva, Self.anonymousGalva,
-             [.identify(userId: "rc_user", appAccountToken: nil)]),
+             [.identify(userId: "rc_user")]),
         ]
         for (name, atLaunch, atLogIn, expected) in cases {
             var state = SyncState(followsRevenueCatIdentity: true)
@@ -244,7 +242,7 @@ final class SyncDecisionsTests: XCTestCase {
         XCTAssertEqual(state.connect(to: RevenueCatCustomer.identified("user_a").user, galva: stale), [])
         XCTAssertEqual(state.apply(.anonymous(), galva: stale).filter(isIdentity), [.logOut])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: stale).filter(isIdentity), [
-            .logOut, .identify(userId: "user_b", appAccountToken: nil),
+            .logOut, .identify(userId: "user_b"),
         ])
     }
 
@@ -256,7 +254,7 @@ final class SyncDecisionsTests: XCTestCase {
         let stale = Self.galva("user_a")
 
         XCTAssertEqual(state.apply(.identified("user_b"), galva: stale).filter(isIdentity), [
-            .logOut, .identify(userId: "user_b", appAccountToken: nil),
+            .logOut, .identify(userId: "user_b"),
         ])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: stale).filter(isIdentity), [])
         XCTAssertEqual(state.apply(.anonymous(), galva: stale).filter(isIdentity), [.logOut])
@@ -317,7 +315,7 @@ final class SyncDecisionsTests: XCTestCase {
         let galva = Self.anonymousGalva
 
         XCTAssertEqual(state.apply(.identified("user_42", entitlements: ["pro"]), galva: galva), [
-            .identify(userId: "user_42", appAccountToken: nil),
+            .identify(userId: "user_42"),
             .setTraits(RevenueCatTraits(.identified("user_42", entitlements: ["pro"]))),
         ])
         XCTAssertEqual(state.apply(.anonymous("$RCAnonymousID:9"), galva: galva), [

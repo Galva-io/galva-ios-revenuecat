@@ -59,7 +59,7 @@ final class CustomerSyncTests: XCTestCase {
         foreground.becomeActive()
 
         let identified = await eventually {
-            self.galva.calls.contains(.identify(userId: "user_42", appAccountToken: nil))
+            self.galva.calls.contains(.identify(userId: "user_42"))
         }
         XCTAssertTrue(identified)
         XCTAssertTrue(foreground.stopped, "stops observing foregrounds once connected")
@@ -95,9 +95,9 @@ final class CustomerSyncTests: XCTestCase {
         let done = await eventually { self.galva.calls.filter { $0 == .logOut }.count == 2 }
         XCTAssertTrue(done)
         XCTAssertEqual(galva.calls.filter { $0 != .reconcile && !Self.isTraits($0) }, [
-            .identify(userId: "user_a", appAccountToken: nil),
+            .identify(userId: "user_a"),
             .logOut,
-            .identify(userId: "user_b", appAccountToken: nil),
+            .identify(userId: "user_b"),
             .logOut,
         ])
         XCTAssertFalse(galva.calledOnMainThread)
@@ -156,13 +156,13 @@ final class CustomerSyncTests: XCTestCase {
 
         let mirrored = await eventually { self.store.saves == ["user_b"] }
         XCTAssertTrue(mirrored)
-        XCTAssertEqual(galva.calls, [.logOut, .identify(userId: "user_b", appAccountToken: nil)])
+        XCTAssertEqual(galva.calls, [.logOut, .identify(userId: "user_b")])
 
         revenueCat.updatesContinuation.yield(.identified("user_b"))
 
         let synced = await waitForTraits(1)
         XCTAssertTrue(synced)
-        XCTAssertEqual(identityCalls, [.logOut, .identify(userId: "user_b", appAccountToken: nil)], "not again for the update")
+        XCTAssertEqual(identityCalls, [.logOut, .identify(userId: "user_b")], "not again for the update")
     }
 
     func test_launch_logOutTheSyncMissed_thenLogIn_identifiesTheNewUser() async {
@@ -180,7 +180,7 @@ final class CustomerSyncTests: XCTestCase {
 
         let identified = await eventually { self.store.saves == [nil, "user_b"] }
         XCTAssertTrue(identified)
-        XCTAssertEqual(identityCalls, [.logOut, .identify(userId: "user_b", appAccountToken: nil)])
+        XCTAssertEqual(identityCalls, [.logOut, .identify(userId: "user_b")])
     }
 
     func test_launch_galvaAlreadyRevenueCatsUser_makesNoIdentityCalls() async {

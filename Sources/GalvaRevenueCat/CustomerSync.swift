@@ -88,12 +88,11 @@ actor CustomerSync {
 
     private func perform(_ action: SyncAction) {
         switch action {
-        case .identify(let userId, let appAccountToken):
+        case .identify(let userId):
             logger.info(.integration, "identifying Galva user from RevenueCat", metadata: [
                 "userId": userId,
-                "appAccountToken": appAccountToken == nil ? "unchanged" : "appUserID",
             ])
-            galva.identify(userId: userId, appAccountToken: appAccountToken)
+            galva.identify(userId: userId)
         case .logOut:
             logger.info(.integration, "RevenueCat user changed; logging Galva out")
             galva.logOut()

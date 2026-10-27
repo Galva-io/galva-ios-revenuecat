@@ -125,7 +125,7 @@ Purchases and attributes still sync.
 
 To catch changes from a previous launch, the integration remembers the RevenueCat app user ID it last passed to Galva. At launch, as soon as RevenueCat is configured, it compares that, and RevenueCat's current user, with Galva's current subscriber. While RevenueCat is anonymous, it logs out only a Galva subscriber it identified itself, so one your app identified stays until RevenueCat logs in as someone else.
 
-If the RevenueCat app user ID is a UUID, it's also passed as Galva's app account token, even when Galva is already identified with that ID. RevenueCat attaches that same UUID to the purchases it makes, so purchases from either SDK match the same subscriber.
+The integration never sets Galva's app account token. RevenueCat doesn't expose the token it attaches to its purchases, so Galva keeps its own and matches every purchase to the subscriber by its transaction ID, as described below.
 
 ### Purchases from Galva's messages
 
@@ -134,7 +134,7 @@ If the RevenueCat app user ID is a UUID, it's also passed as Galva's app account
 | `.revenueCat` (default) | `Purchases.purchase(product:)`. RevenueCat records and finishes the transaction. | Galva's StoreKit purchase, since RevenueCat's API can't apply a Galva-signed offer. Then `syncPurchases()`, then the transaction is finished. |
 | `.myApp` | Galva's StoreKit purchase, then `recordPurchase(_:)`. The transaction stays unfinished for your app to finish. | Same. |
 
-Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it for promotional offers, with `.myApp`, and until RevenueCat is configured. `Purchases.purchase(product:)` attaches a token only when the RevenueCat app user ID is a UUID, so anonymous subscribers and other IDs get none. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber.
+Galva's StoreKit purchase attaches the subscriber's Galva app account token; the integration uses it for promotional offers, with `.myApp`, and until RevenueCat is configured. `Purchases.purchase(product:)` attaches whatever token RevenueCat chooses, which its API doesn't expose. Either way, after every completed purchase the integration calls `Galva.reconcileTransactions()`, which matches the new transaction to the current subscriber by its transaction ID.
 
 With `.myApp`, StoreKit doesn't put the transaction on `Transaction.updates`, and the integration has no callback for it. Your app picks it up from `Transaction.unfinished`, at launch and whenever it becomes active, and finishes it, as in Galva's [Finish offer purchases](https://github.com/Galva-io/galva-ios#6-finish-offer-purchases) step.
 

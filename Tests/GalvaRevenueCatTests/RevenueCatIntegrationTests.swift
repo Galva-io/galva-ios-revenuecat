@@ -40,7 +40,7 @@ final class RevenueCatIntegrationTests: XCTestCase {
         foreground.becomeActive()
 
         let identified = await eventually {
-            galva.calls.contains(.identify(userId: "user_42", appAccountToken: nil))
+            galva.calls.contains(.identify(userId: "user_42"))
         }
         XCTAssertTrue(identified)
     }
