@@ -22,6 +22,11 @@ final class SyncDecisionsTests: XCTestCase {
         GalvaIdentity(userId: userId, appAccountToken: UUID())
     }
 
+    /// RevenueCat as `customer`'s user, with nothing cached for them.
+    private static func uncached(_ customer: RevenueCatCustomer) -> RevenueCatSnapshot {
+        RevenueCatSnapshot(uncached: customer.user)
+    }
+
     /// Connect a fresh state as the first update's user, then feed it
     /// `updates`, as `CustomerSync` does, with Galva reporting `galva`
     /// throughout; return the actions of the kinds the test cares about.
@@ -36,7 +41,7 @@ final class SyncDecisionsTests: XCTestCase {
             followsRevenueCatIdentity: followsRevenueCatIdentity,
             lastMirroredUserID: lastMirroredUserID
         )
-        let atConnect = updates.first.map { state.connect(to: $0.user, galva: galva) } ?? []
+        let atConnect = updates.first.map { state.connect(to: Self.uncached($0), galva: galva) } ?? []
         return (atConnect + updates.flatMap { state.apply($0, galva: galva) }).filter(keep)
     }
 
@@ -157,18 +162,18 @@ final class SyncDecisionsTests: XCTestCase {
     func test_launch_missedLogOut_thenLogIn_newUserDoesNotInherit() {
         var state = SyncState(followsRevenueCatIdentity: true, lastMirroredUserID: "user_a")
 
-        XCTAssertEqual(state.connect(to: RevenueCatCustomer.anonymous().user, galva: Self.galva("user_a")), [.logOut])
+        XCTAssertEqual(state.connect(to: Self.uncached(.anonymous()), galva: Self.galva("user_a")), [.logOut])
         XCTAssertEqual(state.apply(.anonymous(), galva: Self.anonymousGalva).filter(isIdentity), [])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: Self.anonymousGalva).filter(isIdentity), [
             .identify(userId: "user_b"),
         ])
     }
 
-    func test_connect_makesOnlyIdentityCalls_theFirstUpdateSendsTraits() {
+    func test_connect_nothingCached_makesOnlyIdentityCalls_theFirstUpdateSendsTraits() {
         var state = SyncState(followsRevenueCatIdentity: true, lastMirroredUserID: "user_a")
         let customer = RevenueCatCustomer.identified("user_b", purchases: ["pro.month": Date(timeIntervalSince1970: 1_800_000_000)])
 
-        XCTAssertEqual(state.connect(to: customer.user, galva: Self.galva("user_a")), [
+        XCTAssertEqual(state.connect(to: Self.uncached(customer), galva: Self.galva("user_a")), [
             .logOut, .identify(userId: "user_b"),
         ])
         XCTAssertEqual(
@@ -176,6 +181,26 @@ final class SyncDecisionsTests: XCTestCase {
             [.setTraits(RevenueCatTraits(customer))],
             "no identity calls again, and no reconcile on the first update"
         )
+    }
+
+    func test_connect_cached_sendsTraits_andRevenueCatsFirstUpdateCanReconcile() {
+        // RevenueCat's first update may be the app's own paywall purchase:
+        // when the cache matches what RevenueCat fetches at launch, or a
+        // `PurchasesDelegate` set later counted it as sent, nothing comes
+        // before it.
+        var state = SyncState(followsRevenueCatIdentity: true)
+        let day1 = Date(timeIntervalSince1970: 1_800_000_000)
+        let cached = RevenueCatCustomer.identified("user_a", purchases: ["pro.month": day1])
+        let bought = RevenueCatCustomer.identified("user_a", purchases: [
+            "pro.month": day1,
+            "pro.year": day1.addingTimeInterval(60),
+        ])
+
+        XCTAssertEqual(state.connect(to: RevenueCatSnapshot(cached), galva: Self.anonymousGalva), [
+            .identify(userId: "user_a"),
+            .setTraits(RevenueCatTraits(cached)),
+        ], "no reconcile: Galva's launch sweep covers what RevenueCat knew at launch")
+        XCTAssertEqual(state.apply(bought, galva: Self.galva("user_a")).filter(isReconcile), [.reconcileTransactions])
     }
 
     func test_launch_galvaAlreadyX_makesNoCalls_evenForAUUIDAppUserID() {
@@ -226,7 +251,7 @@ final class SyncDecisionsTests: XCTestCase {
         ]
         for (name, atLaunch, atLogIn, expected) in cases {
             var state = SyncState(followsRevenueCatIdentity: true)
-            XCTAssertEqual(state.connect(to: RevenueCatCustomer.anonymous().user, galva: atLaunch), [], name)
+            XCTAssertEqual(state.connect(to: Self.uncached(.anonymous()), galva: atLaunch), [], name)
             XCTAssertEqual(state.apply(.anonymous(), galva: atLaunch).filter(isIdentity), [], name)
 
             XCTAssertEqual(state.apply(.identified("rc_user"), galva: atLogIn).filter(isIdentity), expected, name)
@@ -239,7 +264,7 @@ final class SyncDecisionsTests: XCTestCase {
         var state = SyncState(followsRevenueCatIdentity: true, lastMirroredUserID: "user_a")
         let stale = Self.galva("user_a")
 
-        XCTAssertEqual(state.connect(to: RevenueCatCustomer.identified("user_a").user, galva: stale), [])
+        XCTAssertEqual(state.connect(to: Self.uncached(.identified("user_a")), galva: stale), [])
         XCTAssertEqual(state.apply(.anonymous(), galva: stale).filter(isIdentity), [.logOut])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: stale).filter(isIdentity), [
             .logOut, .identify(userId: "user_b"),
@@ -264,7 +289,7 @@ final class SyncDecisionsTests: XCTestCase {
         var state = SyncState(followsRevenueCatIdentity: true, lastMirroredUserID: "user_a")
         XCTAssertEqual(state.mirroredUserID, "user_a", "starts from the previous launch")
 
-        _ = state.connect(to: RevenueCatCustomer.identified("user_b").user, galva: Self.galva("user_b"))
+        _ = state.connect(to: Self.uncached(.identified("user_b")), galva: Self.galva("user_b"))
         XCTAssertEqual(state.mirroredUserID, "user_b", "Galva already user_b: nothing to call, still mirrored")
 
         _ = state.apply(.identified("user_c"), galva: Self.galva("user_b"))
@@ -277,7 +302,7 @@ final class SyncDecisionsTests: XCTestCase {
     func test_launch_anonymousCarveOut_forgetsTheLastMirroredUser() {
         var state = SyncState(followsRevenueCatIdentity: true, lastMirroredUserID: "user_a")
 
-        XCTAssertEqual(state.connect(to: RevenueCatCustomer.anonymous().user, galva: Self.galva("app_user")), [])
+        XCTAssertEqual(state.connect(to: Self.uncached(.anonymous()), galva: Self.galva("app_user")), [])
 
         XCTAssertNil(state.mirroredUserID)
     }
@@ -285,11 +310,76 @@ final class SyncDecisionsTests: XCTestCase {
     func test_manualIdentity_atLaunch_leavesGalvaAlone_andMirrorsNobody() {
         var state = SyncState(followsRevenueCatIdentity: false, lastMirroredUserID: "user_a")
 
-        XCTAssertEqual(state.connect(to: RevenueCatCustomer.anonymous().user, galva: Self.galva("user_a")), [])
+        XCTAssertEqual(state.connect(to: Self.uncached(.anonymous()), galva: Self.galva("user_a")), [])
         XCTAssertNil(state.mirroredUserID)
         XCTAssertEqual(state.apply(.anonymous(), galva: Self.galva("user_a")).filter(isIdentity), [])
         XCTAssertEqual(state.apply(.identified("user_b"), galva: Self.galva("user_a")).filter(isIdentity), [])
         XCTAssertNil(state.mirroredUserID)
+    }
+
+    // MARK: - Fresh reads
+
+    func test_refresh_afterASignUp_identifiesAndSendsTheMergedCustomersTraits() {
+        // `logIn` merged the anonymous user into user_42: the same customer,
+        // so RevenueCat sent no update, but its cache is under the new ID.
+        var state = SyncState(followsRevenueCatIdentity: true)
+        let anonymous = RevenueCatCustomer.anonymous()
+        let merged = anonymous.withUser(RevenueCatUser(appUserID: "user_42", isAnonymous: false))
+        XCTAssertEqual(state.connect(to: RevenueCatSnapshot(anonymous), galva: Self.anonymousGalva), [
+            .setTraits(RevenueCatTraits(anonymous)),
+        ])
+
+        XCTAssertEqual(state.refresh(RevenueCatSnapshot(merged), galva: Self.anonymousGalva), [
+            .identify(userId: "user_42"),
+            .setTraits(RevenueCatTraits(merged)),
+        ])
+        XCTAssertEqual(state.mirroredUserID, "user_42")
+    }
+
+    func test_refresh_nothingCached_decidesIdentityOnly() {
+        // A `logOut` offline: RevenueCat's new anonymous user has nothing
+        // cached until RevenueCat fetches it, and sends it then.
+        var state = SyncState(followsRevenueCatIdentity: true)
+        _ = state.connect(to: RevenueCatSnapshot(.identified("user_a")), galva: Self.anonymousGalva)
+        let anonymous = RevenueCatCustomer.anonymous("$RCAnonymousID:2")
+
+        XCTAssertEqual(state.refresh(Self.uncached(anonymous), galva: Self.galva("user_a")), [.logOut])
+        XCTAssertNil(state.mirroredUserID)
+        XCTAssertEqual(state.apply(anonymous, galva: Self.anonymousGalva), [
+            .setTraits(RevenueCatTraits(anonymous)),
+        ])
+    }
+
+    func test_refresh_withNothingNew_makesNoCalls() {
+        var state = SyncState(followsRevenueCatIdentity: true)
+        let customer = RevenueCatCustomer.identified("user_a", entitlements: ["pro"])
+        let galva = Self.galva("user_a")
+        _ = state.connect(to: RevenueCatSnapshot(customer), galva: galva)
+
+        XCTAssertEqual(state.refresh(RevenueCatSnapshot(customer), galva: galva), [])
+        XCTAssertEqual(state.refresh(Self.uncached(customer), galva: galva), [])
+    }
+
+    func test_refresh_manual_resendsTraitsAfterTheAppSwitchesGalvaUsers() {
+        var state = SyncState(followsRevenueCatIdentity: false)
+        let customer = RevenueCatCustomer.identified("rc_1", entitlements: ["pro"])
+        _ = state.connect(to: RevenueCatSnapshot(customer), galva: Self.galva("galva_1"))
+
+        XCTAssertEqual(state.refresh(RevenueCatSnapshot(customer), galva: Self.galva("galva_2")), [
+            .setTraits(RevenueCatTraits(customer)),
+        ])
+    }
+
+    func test_seenAppUserID_isRevenueCatsLatest_fromEveryRead() {
+        var state = SyncState(followsRevenueCatIdentity: false)
+        XCTAssertNil(state.seenAppUserID)
+
+        _ = state.connect(to: Self.uncached(.anonymous("$RCAnonymousID:1")), galva: Self.anonymousGalva)
+        XCTAssertEqual(state.seenAppUserID, "$RCAnonymousID:1", "when connecting")
+        _ = state.apply(.identified("user_a"), galva: Self.anonymousGalva)
+        XCTAssertEqual(state.seenAppUserID, "user_a", "from an update")
+        _ = state.refresh(Self.uncached(.identified("user_b")), galva: Self.anonymousGalva)
+        XCTAssertEqual(state.seenAppUserID, "user_b", "from a fresh read, with .manual too")
     }
 
     // MARK: - Traits

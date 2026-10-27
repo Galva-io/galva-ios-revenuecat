@@ -74,9 +74,9 @@ struct MyApp: App {
 
 Galva presents its in-app messages on its own; see [Present messages yourself](https://github.com/Galva-io/galva-ios#present-messages-yourself) to control when they appear.
 
-From now on, use RevenueCat as usual. `Purchases.shared.logIn("user_42")` identifies the Galva subscriber as `user_42`. If you followed Galva's docs and call `AppUser.identify(userId: Purchases.shared.appUserID)`, you can remove that call.
+From now on, use RevenueCat as usual. Within two seconds, `Purchases.shared.logIn("user_42")` identifies the Galva subscriber as `user_42`. If you followed Galva's docs and call `AppUser.identify(userId: Purchases.shared.appUserID)`, you can remove that call.
 
-The order of the two `configure` calls doesn't matter. If RevenueCat is configured later, for example after an async step, the integration connects the next time your app becomes active. Until then, offers bought in Galva's messages use Galva's own StoreKit purchase.
+The order of the two `configure` calls doesn't matter. If RevenueCat is configured later, for example after an async step, the integration connects within two seconds while your app is active. Until then, offers bought in Galva's messages use Galva's own StoreKit purchase.
 
 ### 3. Connect RevenueCat to Galva
 
@@ -96,7 +96,7 @@ Run your app with `logLevel: .debug` in `Galva.configure`, and filter Console.ap
 subsystem:co.galva.sdk category:integration
 ```
 
-You should see `connected to RevenueCat`, with the RevenueCat version and mode. After `Purchases.shared.logIn`, you should see `identifying Galva user from RevenueCat`.
+You should see `connected to RevenueCat`, with the RevenueCat version and mode. Within two seconds of `Purchases.shared.logIn`, you should see `identifying Galva user from RevenueCat`.
 
 ---
 
@@ -120,8 +120,10 @@ Purchases and attributes still sync.
 | Switched from `X` to `Y` without logging out | `AppUser.logOut()`, then `identify(userId: "Y")` |
 | Logged out, back to anonymous | `AppUser.logOut()` |
 | Starts a launch as `X` while Galva is identified as someone else, for example after `Purchases.configure(withAPIKey:appUserID:)` | `AppUser.logOut()`, then `identify(userId: "X")` |
-| Logged out where the integration couldn't see it, for example offline or just before the app quit | `AppUser.logOut()`, at the next launch at the latest, even offline |
+| Logged out just before the app quit | `AppUser.logOut()` at the next launch, even offline |
 | Anonymous the whole time | Nothing. Galva may be identified separately. |
+
+RevenueCat reports changes to its customer, not to its app user ID. Its `customerInfoStream` sends nothing when `logIn` merges an anonymous user into a new ID, the usual sign-up, and nothing after `logOut` until RevenueCat has fetched its new anonymous user. So the integration reads RevenueCat's app user ID every two seconds while your app is active. Each time your app becomes active, it also reads RevenueCat's user and the customer info RevenueCat has cached for them. A `logIn` or `logOut` reaches Galva within two seconds, offline too.
 
 To catch changes from a previous launch, the integration remembers the RevenueCat app user ID it last passed to Galva. At launch, as soon as RevenueCat is configured, it compares that, and RevenueCat's current user, with Galva's current subscriber. While RevenueCat is anonymous, it logs out only a Galva subscriber it identified itself, so one your app identified stays until RevenueCat logs in as someone else.
 
@@ -144,7 +146,7 @@ If handing a purchase to RevenueCat fails, the subscriber doesn't see an error, 
 
 ### Attributes
 
-Each Galva subscriber gets these attributes, updated when they change. When the Galva subscriber changes, including when your app switches users with `.manual`, they're sent again with the next RevenueCat update.
+Each Galva subscriber gets these attributes, from RevenueCat's cached customer info as soon as the integration connects, then whenever they change. When the Galva subscriber changes, including when your app switches users with `.manual`, they're sent again the next time your app becomes active, or with the next RevenueCat update if that comes first.
 
 | Attribute | Value |
 |---|---|
@@ -157,7 +159,7 @@ Each Galva subscriber gets these attributes, updated when they change. When the 
 - **The sync stays off the main thread.** It runs on its own actor, and RevenueCat and StoreKit work in the background. The only main-thread work is deciding how to route a purchase someone starts in a Galva message.
 - **Your `PurchasesDelegate` is untouched.** The integration listens to RevenueCat's `customerInfoStream`, which supports any number of listeners.
 - **It installs Galva's purchase controller.** Don't call `Galva.setPurchaseController` yourself as well.
-- **It watches for your app becoming active only while waiting for RevenueCat**, and stops once it connects.
+- **It checks RevenueCat's app user ID every two seconds while your app is active.** RevenueCat keeps the ID in memory, so the check is cheap. The integration reads RevenueCat's cached customer info only when your app becomes active or that ID changes, and nothing runs while your app isn't active.
 - **It stores one value**: the RevenueCat app user ID it last passed to Galva, in `UserDefaults`, under a `co.galva.revenuecat.` key. Its privacy manifest declares that use, so you don't have to.
 
 Its log lines go through Galva's logger, under the `integration` category, and follow your `logLevel` and custom logger.

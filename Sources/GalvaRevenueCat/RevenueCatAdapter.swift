@@ -14,12 +14,13 @@ import RevenueCat
 import StoreKit
 
 /// Who RevenueCat's user is.
-struct RevenueCatUser: Sendable {
+struct RevenueCatUser: Sendable, Equatable {
     var appUserID: String
     var isAnonymous: Bool
 }
 
-/// RevenueCat customer state, captured on every `CustomerInfo` update.
+/// RevenueCat customer state, from a `CustomerInfo`: one RevenueCat sent, or
+/// the one it has cached for its user.
 struct RevenueCatCustomer: Sendable {
     var appUserID: String
     var isAnonymous: Bool
@@ -31,6 +32,25 @@ struct RevenueCatCustomer: Sendable {
 
     var user: RevenueCatUser {
         RevenueCatUser(appUserID: appUserID, isAnonymous: isAnonymous)
+    }
+}
+
+/// RevenueCat's user, read together with the customer info it has cached
+/// for them.
+struct RevenueCatSnapshot: Sendable {
+    let user: RevenueCatUser
+    /// `nil` until RevenueCat has fetched customer info for `user`, as for
+    /// the anonymous user a `logOut` creates, while offline.
+    let customer: RevenueCatCustomer?
+
+    init(_ customer: RevenueCatCustomer) {
+        user = customer.user
+        self.customer = customer
+    }
+
+    init(uncached user: RevenueCatUser) {
+        self.user = user
+        customer = nil
     }
 }
 
@@ -53,9 +73,13 @@ protocol RevenueCatAdapter: Sendable {
     /// (`purchasesAreCompletedBy: .myApp`).
     var appCompletesPurchases: Bool { get }
     var frameworkVersion: String { get }
-    /// RevenueCat's user right now. Known as soon as RevenueCat is
-    /// configured, before any `CustomerInfo` arrives, even offline.
-    var currentUser: RevenueCatUser { get }
+    /// RevenueCat's app user ID right now. RevenueCat keeps it in memory, so
+    /// this is cheap enough to poll.
+    var currentAppUserID: String { get }
+    /// RevenueCat's user right now, with the customer info it has cached for
+    /// them. The user is known as soon as RevenueCat is configured, even
+    /// offline; the customer info once RevenueCat has fetched it for them.
+    func snapshot() -> RevenueCatSnapshot
     func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome
     /// Looks the product up with StoreKit directly: `false` when the App
     /// Store doesn't sell it, StoreKit's error when the lookup fails.
@@ -67,7 +91,11 @@ protocol RevenueCatAdapter: Sendable {
     /// Its id: enough to tell whether StoreKit has a new one, and, unlike
     /// a `StoreKit.Transaction`, something tests can stand in for.
     func latestTransactionID(for productId: String) async -> UInt64?
-    /// RevenueCat's last-known customer state first, then every change.
+    /// The customer info RevenueCat last sent, if any, then each one it
+    /// sends. RevenueCat sends one only when the customer's data differs
+    /// from the last one it sent, so a new app user ID alone doesn't produce
+    /// one: a `logIn` that merges an anonymous user into a new ID, the usual
+    /// sign-up, keeps the same customer.
     func customerUpdates() -> AsyncStream<RevenueCatCustomer>
 }
 
@@ -79,8 +107,21 @@ struct LiveRevenueCatAdapter: RevenueCatAdapter {
 
     var frameworkVersion: String { Purchases.frameworkVersion }
 
-    var currentUser: RevenueCatUser {
-        RevenueCatUser(appUserID: Purchases.shared.appUserID, isAnonymous: Purchases.shared.isAnonymous)
+    var currentAppUserID: String { Purchases.shared.appUserID }
+
+    func snapshot() -> RevenueCatSnapshot {
+        let purchases = Purchases.shared
+        // `cachedCustomerInfo` is for whoever RevenueCat's user is as it's
+        // read. Reading the ID on both sides keeps the two together; a read
+        // that straddles a `logIn` or `logOut` is tried again.
+        for _ in 0..<3 {
+            let user = Self.currentUser(purchases)
+            let info = purchases.cachedCustomerInfo
+            guard purchases.appUserID == user.appUserID else { continue }
+            return info.map { RevenueCatSnapshot(RevenueCatCustomer(user: user, info: $0)) }
+                ?? RevenueCatSnapshot(uncached: user)
+        }
+        return RevenueCatSnapshot(uncached: Self.currentUser(purchases))
     }
 
     func purchase(productId: String) async throws -> RevenueCatPurchaseOutcome {
@@ -124,13 +165,7 @@ struct LiveRevenueCatAdapter: RevenueCatAdapter {
             // stream consumers.
             let task = Task {
                 for await info in purchases.customerInfoStream {
-                    continuation.yield(RevenueCatCustomer(
-                        appUserID: purchases.appUserID,
-                        isAnonymous: purchases.isAnonymous,
-                        originalAppUserID: info.originalAppUserId,
-                        activeEntitlements: info.entitlements.active.keys.sorted(),
-                        purchaseDates: Self.purchaseDates(info)
-                    ))
+                    continuation.yield(RevenueCatCustomer(user: Self.currentUser(purchases), info: info))
                 }
                 continuation.finish()
             }
@@ -138,11 +173,23 @@ struct LiveRevenueCatAdapter: RevenueCatAdapter {
         }
     }
 
-    private static func purchaseDates(_ info: CustomerInfo) -> [String: Date] {
-        var dates: [String: Date] = [:]
+    private static func currentUser(_ purchases: Purchases) -> RevenueCatUser {
+        RevenueCatUser(appUserID: purchases.appUserID, isAnonymous: purchases.isAnonymous)
+    }
+}
+
+private extension RevenueCatCustomer {
+    init(user: RevenueCatUser, info: CustomerInfo) {
+        var purchaseDates: [String: Date] = [:]
         for productID in info.allPurchasedProductIdentifiers {
-            dates[productID] = info.purchaseDate(forProductIdentifier: productID)
+            purchaseDates[productID] = info.purchaseDate(forProductIdentifier: productID)
         }
-        return dates
+        self.init(
+            appUserID: user.appUserID,
+            isAnonymous: user.isAnonymous,
+            originalAppUserID: info.originalAppUserId,
+            activeEntitlements: info.entitlements.active.keys.sorted(),
+            purchaseDates: purchaseDates
+        )
     }
 }

@@ -5,7 +5,7 @@
 #     toolchain Galva supports, and the one that floor exists for;
 #   • the newest 5.x SwiftPM resolves, on the newest Xcode on the runner.
 # Each job also builds for the iOS Simulator: `swift test` runs on macOS, so
-# it never compiles the iOS-only code (the UIKit foreground signals, Galva's
+# it never compiles the iOS-only code (the UIKit app signals, Galva's
 # UIKit/WebKit bridge, RevenueCat's iOS paths).
 
 name: CI

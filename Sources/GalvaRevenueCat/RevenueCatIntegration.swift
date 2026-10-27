@@ -19,7 +19,8 @@
 //
 //  `Purchases.configure` may run before or after `Galva.configure`. Until
 //  RevenueCat is configured, purchases use Galva's built-in StoreKit flow and
-//  the sync waits, re-checking on each app foreground.
+//  the sync waits, re-checking each time the app becomes active and every
+//  two seconds while it is.
 //
 
 import Foundation
@@ -54,7 +55,7 @@ public extension Galva.Integration {
                 revenueCat: LiveRevenueCatAdapter(),
                 galva: LiveGalvaAdapter(),
                 store: LiveMirroredUserStore(),
-                foregrounds: .app()
+                app: .app()
             )
         }
     }
@@ -75,7 +76,7 @@ enum RevenueCatIntegration {
         revenueCat: any RevenueCatAdapter,
         galva: any GalvaAdapter,
         store: any MirroredUserStore,
-        foregrounds: ForegroundSignals
+        app: AppSignals
     ) {
         Galva.setPurchaseController(
             RevenueCatPurchaseController(revenueCat: revenueCat, galva: galva, logger: logger)
@@ -88,7 +89,7 @@ enum RevenueCatIntegration {
         )
         // Runs for the life of the app; the task keeps `sync` alive.
         Task {
-            await sync.run(revenueCat: revenueCat, foregrounds: foregrounds)
+            await sync.run(revenueCat: revenueCat, app: app)
         }
     }
 }
